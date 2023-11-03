@@ -11,20 +11,23 @@
 #include <curl/curl.h>
 
 #include "utils.h"
+#include "podcast.h"
 
 
 #define API_CLIENT_MAX_SERVER 64
 #define API_CLIENT_MAX_USER   64
 #define API_CLIENT_MAX_KEY    64
-#define API_CLIENT_MAX_RDATA  10 * 1024
+#define API_CLIENT_MAX_RDATA  100 * 1024
 
 #define API_CLIENT_URL_FMT    "%s/index.php/apps/gpoddersync/%s"
 #define API_CLIENT_SUBSCRIPTIONS "subscriptions"
+#define API_CLIENT_EPISODE_ACTION "episode_action"
 
 
 
 
 enum APIClientReqResult {
+    API_CLIENT_REQ_SERIALIZE_ERROR,
     API_CLIENT_REQ_ERROR,
     API_CLIENT_REQ_UNKNOWN_ERROR,
     API_CLIENT_REQ_NOTFOUND,
@@ -34,8 +37,12 @@ enum APIClientReqResult {
 struct APIClientRData {
     char data[API_CLIENT_MAX_RDATA];
     size_t size;
+};
 
-
+struct APIClientPData {
+    char data[API_CLIENT_MAX_RDATA];
+    size_t size;
+    size_t limit;
 };
 
 struct APIClient {
@@ -53,6 +60,7 @@ struct APIClient {
 
 
 enum APIClientReqResult ac_get_subscriptions(struct APIClient *client);
+enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast *pod, time_t since);
 
 
 

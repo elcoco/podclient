@@ -7,6 +7,7 @@
 
 #include "utils.h"
 #include "api_client.h"
+#include "podcast.h"
 
 #define SUCCESS 0
 
@@ -108,7 +109,12 @@ int main(int argc, char **argv)
     client.port = s.port;
     client.timeout = 5L;
 
-    ac_get_subscriptions(&client);
+    //ac_get_subscriptions(&client);
+
+    struct Podcast pod = podcast_init();
+    pod.action = POD_ACTION_PLAY;
+    strncpy(pod.guid, "2ff5675d-fba1-4bb4-b529-7db1b05fe6f6", PODCAST_MAX_GUID);
+    ac_get_episodes(&client, &pod, 1699034956);
 
 
 }
