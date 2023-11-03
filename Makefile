@@ -5,7 +5,7 @@ PKGCONFIG = $(shell which pkg-config)
 CFLAGS := -g -Wall -Wno-unused-variable
 #CFLAGS = -g -Wall -Wno-unused-variable $(shell $(PKGCONFIG) --cflags gtk4 --libs dbus-1 --libs libpulse)
 
-LIBS   := -lasound -lcurl -lX11 -lmpdclient
+LIBS   := -lcurl
 CC := cc
 
 # for gtk (gdebus interface to MPRIS)
