@@ -35,11 +35,8 @@ static size_t ac_req_read_cb(char *ptr, size_t size, size_t nmemb, void *userdat
         return CURLE_WRITE_ERROR;
     }
 
-
     /* copy as much data as possible into the 'ptr' buffer, but no more than
      'size' * 'nmemb' bytes! */
-    //memcpy(data->data + oldsize, ptr, sizeof(data->data));
-    //data->data[chunksize] = '\0';
     memcpy(data->data, ptr, chunksize);
     data->data[chunksize] = '\0';
 
@@ -57,32 +54,22 @@ static size_t ac_req_read_cb(char *ptr, size_t size, size_t nmemb, void *userdat
         chunks[1] = NULL;
     }
 
-
     int nread = json_parse(&json, chunks, sizeof(chunks)/sizeof(*chunks));
-    if (nread < 0) {
-        ERROR("ABORT!!!!!!\n");
+    if (nread < 0)
         return CURLE_WRITE_ERROR;
-    }
-    // nread is the index in a strcat string so index doesn't correspond with data->data
-
-    //data->data[nread] = '\0';
-    //
-    //DEBUG("NEW DATA: %s\n\n", data->data);
 
     bytes_read += nread;
-    //DEBUG("UNREAD: %s\n", data_unread);
-    
 
+    // if not all chars could be read as json, store them in data->unread_data
+    // and pass as first chunk next time
+    // NOTE if a string is larger than a chunk this will not work because in that
+    // case the JSON lib needs more data to find string boundaries.
     if (nread < chunksize)
         strcpy(data->unread_data, ptr+nread);
     else
         data->unread_data[0] = '\0';
-    //memcpy(data->unread_data, ptr+nread, chunksize-nread);
-    //data->data[chunksize-nread] = '\0';
-
 
     DEBUG("Bytes read: %d, total: %d\n", nread, bytes_read);
-    //DEBUG("DATA: %s\n", data->data);
     return chunksize;
 }
 

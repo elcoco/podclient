@@ -244,6 +244,9 @@ static void print_parse_error(struct Position *pos, const char *msg) {
 
 static int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
 {
+    /* Parse a string that starts and ends with  " or '
+     * Can result in a key or a string type
+     */
     char quote[2] = "";
     quote[0] = *(pos->c);
     struct JSONItem ji;
@@ -305,7 +308,6 @@ static int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
 }
 
 
-//size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new)
 size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
 {
     //DEBUG("Parsing: %s\n", data);
@@ -314,7 +316,8 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
     struct Position pos = pos_init(chunks, nchunks);
     printf("input: >%s<\n", pos.c);
 
-    // TODO set to reasonable size
+    // TODO set to reasonable size and protected for buffer overflow
+    // fforward_skip_escaped should return JSON_PARSE_BUFFER_OVERFLOW
     char tmp[2048] = "";
 
     while (1) {
