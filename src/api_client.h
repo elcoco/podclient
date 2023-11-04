@@ -12,12 +12,13 @@
 
 #include "utils.h"
 #include "podcast.h"
+#include "lib/json/json.h"
 
 
 #define API_CLIENT_MAX_SERVER 64
 #define API_CLIENT_MAX_USER   64
 #define API_CLIENT_MAX_KEY    64
-#define API_CLIENT_MAX_RDATA  100 * 1024
+#define API_CLIENT_MAX_RDATA  1 * 1024
 
 #define API_CLIENT_URL_FMT    "%s/index.php/apps/gpoddersync/%s"
 #define API_CLIENT_SUBSCRIPTIONS "subscriptions"
@@ -27,11 +28,13 @@
 
 
 enum APIClientReqResult {
+    API_CLIENT_REQ_OUT_OF_MEMORY,
     API_CLIENT_REQ_SERIALIZE_ERROR,
     API_CLIENT_REQ_ERROR,
+    API_CLIENT_REQ_CURL_ERROR,
     API_CLIENT_REQ_UNKNOWN_ERROR,
     API_CLIENT_REQ_NOTFOUND,
-    API_CLIENT_REQ_SUCCESS = 0
+    API_CLIENT_REQ_SUCCESS
 };
 
 struct APIClientRData {
