@@ -18,13 +18,14 @@
 #define API_CLIENT_MAX_SERVER 64
 #define API_CLIENT_MAX_USER   64
 #define API_CLIENT_MAX_KEY    64
-#define API_CLIENT_MAX_RDATA  1 * 1024
+#define API_CLIENT_MAX_RDATA  100 * 1024
 
 #define API_CLIENT_URL_FMT    "%s/index.php/apps/gpoddersync/%s"
 #define API_CLIENT_SUBSCRIPTIONS "subscriptions"
 #define API_CLIENT_EPISODE_ACTION "episode_action"
 
 
+#define JSON_READ_CHUNK_SIZE CURL_MAX_WRITE_SIZE
 
 
 enum APIClientReqResult {
@@ -38,7 +39,9 @@ enum APIClientReqResult {
 };
 
 struct APIClientRData {
-    char data[API_CLIENT_MAX_RDATA];
+    // string can hold at most twice the chunk size used by CURL
+    char data[API_CLIENT_MAX_RDATA+1];
+    char unread_data[API_CLIENT_MAX_RDATA+1];
     size_t size;
 };
 

@@ -1,5 +1,15 @@
 #include "json.h"
 
+#define DO_DEBUG 0
+#define DO_INFO  1
+#define DO_ERROR 1
+
+#define DEBUG(M, ...) if(DO_DEBUG){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
+#define INFO(M, ...) if(DO_INFO){fprintf(stdout, M, ##__VA_ARGS__);}
+#define ERROR(M, ...) if(DO_ERROR){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
+
+#define ASSERTF(A, M, ...) if(!(A)) {ERROR(M, ##__VA_ARGS__); assert(A); }
+
 
 struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *ji))
 {
@@ -10,14 +20,48 @@ struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *
     return json;
 }
 
-static char* pos_next(struct Position *pos)
+struct Position pos_init(char *chunk_old, char *chunk_new)
 {
-    (pos->c)++;
-    (pos->npos)++;
-    return pos->c;
+    struct Position pos;
+    if (chunk_old != NULL) {
+        pos.chunks[0] = chunk_old;
+        pos.chunks[1] = chunk_new;
+    }
+    else {
+        pos.chunks[0] = chunk_new;
+        pos.chunks[1] = NULL;
+    }
+    pos.c = pos.chunks[0];
+    pos.npos = 0;
+    pos.length = strlen(pos.c);
+    pos.nchunk = 0;
+    return pos;
 }
 
-static char fforward_skip_escaped(struct Position* pos, char* search_lst, char* expected_lst, char* unwanted_lst, char* ignore_lst, char* buf)
+static int pos_next(struct Position *pos)
+{
+    if (pos->npos >= pos->length) {
+        INFO("HERE!\n");
+        if (pos->nchunk < JSON_MAX_CHUNKS &&  pos->chunks[pos->nchunk+1] != NULL) {
+            INFO("Move to next chunk!\n");
+            pos->nchunk++;
+            pos->npos = 0;
+            pos->c = pos->chunks[pos->nchunk];
+            pos->length = strlen(pos->c);
+            return 0;
+        }
+        else {
+            INFO("No more chunks!\n");
+            return -1;
+        }
+    }
+    INFO("skipping!\n");
+    (pos->c)++;
+    (pos->npos)++;
+    return 0;
+}
+
+static enum JSONParseResult fforward_skip_escaped(struct Position* pos, char* search_lst, char* expected_lst, char* unwanted_lst, char* ignore_lst, char* buf)
 {
     /* fast forward until a char from search_lst is found
      * Save all chars in buf until a char from search_lst is found
@@ -39,6 +83,10 @@ static char fforward_skip_escaped(struct Position* pos, char* search_lst, char* 
     //DEBUG("looking for %s in %s\n", search_lst, pos->c);
 
     while (1) {
+        //if (pos->npos >= pos->length) {
+        //    ERROR("Out of bounds\n");
+        //    return JSON_PARSE_END_OF_DATA;
+        //}
         if (strchr(search_lst, *(pos->c))) {
             // check if previous character whas a backslash which indicates escaped
             if (pos->npos > 0 && *(pos->c-1) == '\\') {
@@ -49,36 +97,46 @@ static char fforward_skip_escaped(struct Position* pos, char* search_lst, char* 
             //DEBUG("found char: %c\n", *(pos->c));
         }
         if (strchr(unwanted_lst, *(pos->c)))
-            return -1;
+            return JSON_PARSE_ILLEGAL_CHAR;
 
         if (expected_lst != NULL) {
             if (!strchr(expected_lst, *(pos->c)))
-                return -1;
+                return JSON_PARSE_UNEXPECTED_CHAR;
         }
         if (buf != NULL && !strchr(ignore_lst, *(pos->c)))
             *ptr++ = *(pos->c);
 
-        pos_next(pos);
+        if (pos_next(pos) < 0)
+            return JSON_PARSE_END_OF_DATA;
     }
     // terminate string
     if (ptr != NULL)
         *ptr = '\0';
 
-    char ret = *(pos->c);
+    //char ret = *(pos->c);
 
     //if (buf)
     //    DEBUG("!!!!!!!!!!: >%s<\n", buf);
-    return ret;
+    return JSON_PARSE_SUCCESS;
 }
 
-static int stack_append(struct JSON *json, struct JSONItem ji)
+static struct JSONItem json_item_init(enum JSONDtype dtype, char *data)
 {
-    if (json->stack_pos > JSON_MAX_STACK -1) {
-        printf("ERROR: Can not append, stack is full!\n");
-        return -1;
-    }
+    struct JSONItem ji;
+    ji.dtype = dtype;
+    strncpy(ji.data, data, JSON_MAX_DATA);
+    return ji;
+}
 
-    //printf("Appending item to stack\n");
+static int stack_put(struct JSON *json, struct JSONItem ji)
+{
+    //if (json->stack_pos > JSON_MAX_STACK -1) {
+    //    ERROR("Can not put, stack is full!\n");
+    //    return -1;
+    //}
+
+    ASSERTF(json->stack_pos <= JSON_MAX_STACK -1, "Can't PUT, stack is full!\n");
+
     (json->stack_pos)++;
     memcpy(&(json->stack[json->stack_pos]), &ji, sizeof(struct JSONItem));
     return 0;
@@ -87,23 +145,20 @@ static int stack_append(struct JSON *json, struct JSONItem ji)
 static int stack_pop(struct JSON *json)
 {
     // err is stack is empty
-    if (json->stack_pos < 0) {
-        printf("ERROR: Can not pop, stack is empty!\n");
-        return -1;
-    }
+    //if (json->stack_pos < 0) {
+    //    ERROR("Can not pop, stack is empty!\n");
+    //    return -1;
+    //}
+    ASSERTF(json->stack_pos >= 0, "Can't POP, stack is empty!\n");
 
-    //printf("POP!\n");
     memset(&(json->stack[json->stack_pos]), 0, sizeof(struct Position));
     (json->stack_pos)--;
-    return 0;
-}
 
-static struct JSONItem json_item_init()
-{
-    struct JSONItem ji;
-    ji.dtype = JSON_UNKNOWN;
-    ji.data[0] = '\0';
-    return ji;
+    // if previous value was a key, then also remove this item
+    if (json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_KEY)
+        stack_pop(json);
+
+    return 0;
 }
 
 void stack_debug(struct JSON *json)
@@ -125,100 +180,245 @@ void stack_debug(struct JSON *json)
             case JSON_STRING:
                 strcpy(dtype, "STRING");
                 break;
+            case JSON_NUMBER:
+                strcpy(dtype, "NUMBER");
+                break;
+            case JSON_BOOL:
+                strcpy(dtype, "BOOL  ");
+                break;
             case JSON_UNKNOWN:
                 return;
         }
-        printf("%d: dtype: %s  =>  %s\n", i, dtype, ji->data);
+
+        if (strlen(ji->data) > 0) {
+            DEBUG("%d: dtype: %s  =>  %s\n", i, dtype, ji->data);
+        }
+        else {
+            DEBUG("%d: dtype: %s\n", i, dtype);
+        }
 
     }
 }
 
-size_t json_parse_str(struct JSON *json, char *data)
+static int stack_last_is_key(struct JSON *json)
 {
-    printf("Parsing: %s\n", data);
-    char c;
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_KEY;
+}
 
-    struct Position pos;
-    pos.c = data;
-    pos.npos = 0;
+static int stack_last_is_object(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_OBJECT;
+}
+
+static int stack_last_is_array(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_ARRAY;
+}
+static int stack_last_is_string(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_STRING;
+}
+static int stack_last_is_number(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_NUMBER;
+}
+static int stack_last_is_bool(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_BOOL;
+}
+static int stack_is_empty(struct JSON *json)
+{
+    /* Look in stack to see if this item is a key or not */
+    return json->stack_pos < 0;
+}
+
+static void print_parse_error(struct Position *pos, const char *msg) {
+    if (msg != NULL)
+        ERROR("%s", msg);
+
+    char lctext[JSON_ERR_CHARS_CONTEXT+1];       // buffer for string left from current char
+    char rctext[JSON_ERR_CHARS_CONTEXT+1];       // buffer for string right from current char
+
+    char *lptr = lctext;
+    char *rptr = rctext;
+
+    // get context
+    for (int i=0,j=JSON_ERR_CHARS_CONTEXT ; i<JSON_ERR_CHARS_CONTEXT ; i++, j--) {
+
+        // check if we go out of left string bounds
+        if ((pos->npos - j) >= 0) {
+            *lptr = *(pos->c - j);                  // add char to string
+            lptr++;
+        }
+        // check if we go out of right string bounds
+        // BUG this is not bugfree
+        if ((pos->npos + i +1) < pos->length) {
+            *rptr = *(pos->c + i +1);               // add char to string
+            rptr++;
+        }
+    }
+    rctext[JSON_ERR_CHARS_CONTEXT] = '\0';
+    lctext[JSON_ERR_CHARS_CONTEXT] = '\0';
+
+    ERROR("JSON syntax error: >%c< @ %d\n", *(pos->c), pos->npos);
+    ERROR("\n%s%s%c%s<--%s%s\n", lctext, JRED, *(pos->c), JBLUE, JRESET, rctext);
+}
+
+int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
+{
+    char quote[2] = "";
+    quote[0] = *(pos->c);
+    struct JSONItem ji;
+    if (pos_next(pos) < 0)
+        return -1;
+
+    if (fforward_skip_escaped(pos, quote, NULL, NULL, "\n", buf) < JSON_PARSE_SUCCESS) {
+        ERROR("Failed to find closing quotes\n");
+        return -1;
+    }
+    DEBUG("Found STRING: %s\n", buf);
+
+    if (stack_last_is_key(json) || stack_last_is_array(json))
+        ji = json_item_init(JSON_STRING, buf);
+    else if (stack_last_is_object(json))
+        ji = json_item_init(JSON_KEY, buf);
+
+    stack_put(json, ji);
+    if (pos_next(pos) < 0)
+        return -1;
+
+    stack_debug(json);
+
+    if (!stack_last_is_key(json))
+        stack_pop(json);
+
+    return 0;
+}
+
+int json_parse_number(struct JSON *json, struct Position *pos, char *buf)
+{
+    if (fforward_skip_escaped(pos, ", ]}\n", "0123456789-null.", NULL, "\n", buf) < JSON_PARSE_SUCCESS) {
+        print_parse_error(pos, "Failed to find end of number\n");
+        return -1;
+    }
+    DEBUG("FOUND NUMBER: %s\n", buf);
+    struct JSONItem ji = json_item_init(JSON_NUMBER, buf);
+    json->handle_data_cb(json, &ji);
+    stack_put(json, ji);
+    stack_debug(json);
+    stack_pop(json);
+    return 0;
+}
+
+int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
+{
+    if (fforward_skip_escaped(pos, ", ]}\n", "truefalse", NULL, "\n", buf) < JSON_PARSE_SUCCESS) {
+        ERROR("Unexpected character while parsing boolean: %c\n", *pos->c);
+        print_parse_error(pos, NULL);
+        return -1;
+    }
+    struct JSONItem ji = json_item_init(JSON_BOOL, buf);
+    json->handle_data_cb(json, &ji);
+    stack_put(json, ji);
+    stack_debug(json);
+    stack_pop(json);
+    return 0;
+}
+
+
+size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new)
+{
+    //DEBUG("Parsing: %s\n", data);
+
+    int nread = 0;
+    struct Position pos = pos_init(chunk_old, chunk_new);
 
     char tmp[256] = "";
 
-    while (pos.npos < strlen(data)) {
-        if ((c = fforward_skip_escaped(&pos, "\"[{1234567890-n.tf}]", NULL, NULL, "\n", tmp)) < 0) {
-            printf("ERROR, Unexpected character: %d\n", c);
-            break;
-        }
+    while (1) {
 
-        if (c == '{') {
-            printf("START of object\n");
-            struct JSONItem ji = json_item_init();
-            ji.dtype = JSON_OBJECT;
-            stack_append(json, ji);
-            pos_next(&pos);
-        }
-        else if (c == '}') {
-            printf("END of object\n");
-            stack_pop(json);
-            pos_next(&pos);
-        }
-        else if (c == '[') {
-            printf("START of array\n");
-            struct JSONItem ji = json_item_init();
-            ji.dtype = JSON_ARRAY;
-            stack_append(json, ji);
-            pos_next(&pos);
-        }
-        else if (c == ']') {
-            printf("END of array\n");
-            stack_pop(json);
-            pos_next(&pos);
-        }
-        else if (c == '"') {
-            pos_next(&pos);
-            if ((c = fforward_skip_escaped(&pos, "\"", NULL, NULL, "\n", tmp)) < 0) {
-                printf("Failed to find closing quotes\n");
+        enum JSONParseResult res;
+        if ((res = fforward_skip_escaped(&pos, "\"[{1234567890-n.tf}]", NULL, NULL, "\n", tmp)) < JSON_PARSE_SUCCESS) {
+            if (res == JSON_PARSE_END_OF_DATA) {
                 break;
             }
+            else {
+                print_parse_error(&pos, "Found unexpected character!\n");
+                return -1;
+            }
+        }
+        INFO("Found: >%c<\n", *pos.c);
 
-            if (json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_OBJECT) {
-                printf("FOUND KEY: %s\n", tmp);
-                struct JSONItem ji = json_item_init();
-                ji.dtype = JSON_KEY;
-                strncpy(ji.data, tmp, JSON_MAX_DATA);
-                stack_append(json, ji);
-                stack_debug(json);
+        if (*pos.c == '{') {
+            if (stack_last_is_object(json)) {
+                print_parse_error(&pos, "Unexpected start of object\n");
+                return -1;
             }
-            else if (json->stack_pos >= 0 && json->stack[json->stack_pos].dtype == JSON_KEY) {
-                printf("FOUND VALUE: %s\n", tmp);
-                struct JSONItem ji = json_item_init();
-                ji.dtype = JSON_STRING;
-                strncpy(ji.data, tmp, JSON_MAX_DATA);
-                stack_append(json, ji);
-                stack_debug(json);
-                stack_pop(json);
-                stack_pop(json);
+            DEBUG("START of object\n");
+            struct JSONItem ji = json_item_init(JSON_OBJECT, "");
+            stack_put(json, ji);
+            if (pos_next(&pos) < 0)
+                break;
+        }
+        else if (*pos.c == '}') {
+            if (!stack_last_is_object(json)) {
+                print_parse_error(&pos, "Unexpected end of object\n");
+                return -1;
             }
-            pos_next(&pos);
+            DEBUG("END of object\n");
+            stack_pop(json);
+            if (pos_next(&pos) < 0)
+                break;
+        }
+        else if (*pos.c == '[') {
+            if (stack_last_is_object(json)) {
+                print_parse_error(&pos, "Unexpected start of array\n");
+                return -1;
+            }
+
+            DEBUG("START of array\n");
+            struct JSONItem ji = json_item_init(JSON_ARRAY, "");
+            stack_put(json, ji);
+            if (pos_next(&pos) < 0)
+                break;
+        }
+        else if (*pos.c == ']') {
+            DEBUG("END of array\n");
+            if (!stack_last_is_array(json)) {
+                print_parse_error(&pos, "Unexpected end of array\n");
+                return -1;
+            }
+            stack_pop(json);
+            if (pos_next(&pos) < 0)
+                break;
+        }
+        else if (*pos.c == '"' || *pos.c == '\'') {
+            if (json_parse_string(json, &pos, tmp) < 0)
+                break;
+        }
+
+        else if (strchr("0123456789-n.", *pos.c)) {
+            if (json_parse_number(json, &pos, tmp) < 0)
+                break;
+        }
+
+        else if (strchr("tf", *pos.c)) {
+            if (json_parse_bool(json, &pos, tmp) < 0)
+                break;
         }
         else {
-            printf("found: %c\n", *pos.c);
-            pos_next(&pos);
+            ERROR("Unhandled: %c\n", *pos.c);
+            print_parse_error(&pos, NULL);
+            return -1;
         }
-
-
-
-
+        nread = pos.npos;
     }
 
-    //printf("**********************8\n");
-    //for (; nread<strlen(data) ; nread++, pos++) {
-    //    printf("%c", *pos);
-    //}
-    //printf("**********************8\n");
-
-
-
-    return pos.npos;
-
+    return nread;
 }

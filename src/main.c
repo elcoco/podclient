@@ -114,7 +114,8 @@ int main(int argc, char **argv)
     struct Podcast pod = podcast_init();
     pod.action = POD_ACTION_PLAY;
     strncpy(pod.guid, "2ff5675d-fba1-4bb4-b529-7db1b05fe6f6", PODCAST_MAX_GUID);
-    ac_get_episodes(&client, &pod, 1699034956);
+    ac_get_episodes(&client, &pod, -1);
+    //ac_get_episodes(&client, &pod, 1699034956);
 
 
 }

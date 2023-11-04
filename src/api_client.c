@@ -1,26 +1,93 @@
 #include "api_client.h"
 #include "podcast.h"
 
+struct JSON json;
+int bytes_read = 0;
+
+static int str_rm_from_start(char *str, size_t n)
+{
+    if (strlen(str) < n)
+        return -1;
+
+    char *lptr = str;
+    char *rptr = str+n;
+    while (*rptr != '\0')
+        *lptr++ = *rptr++;
+
+    *(lptr + 1) = '\0';
+    return 0;
+}
+
+
 static size_t ac_req_read_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
-    DEBUG("BLA\n");
     struct APIClientRData *data = userdata;
-    size_t realsize = size * nmemb;
+    size_t chunksize = size * nmemb;
 
-    if (data->size + realsize > API_CLIENT_MAX_RDATA) {
-        ERROR("Out of memory!\n");
+    DEBUG("\n\n\n***** STARTING PARSING ******************************\n")
+    // NOTE: oldsize are the chars that were not succesfully read when parsing JSON
+    size_t oldsize = strlen(data->data);
+
+
+    // This should never happen
+    if (chunksize > API_CLIENT_MAX_RDATA) {
+        ERROR("Chunksize is too big! %ld > %d\n", chunksize, API_CLIENT_MAX_RDATA);
         return CURLE_WRITE_ERROR;
     }
 
+
     /* copy as much data as possible into the 'ptr' buffer, but no more than
      'size' * 'nmemb' bytes! */
-    memcpy(data->data + data->size, ptr, realsize);
+    //memcpy(data->data + oldsize, ptr, sizeof(data->data));
+    //data->data[chunksize] = '\0';
+    memcpy(data->data, ptr, chunksize);
+    data->data[chunksize] = '\0';
 
-    data->size += realsize;
-    data->data[data->size] = '\0';
 
-    DEBUG("Read %ld bytes\n", realsize);
-    return realsize;
+    //// check if there is old unread data
+    //if (strlen(data->unread_data) > 0) {
+    //    strncpy(tmp, data->unread_data, strlen(tmp));
+    //    strcat(tmp, data->data);
+    //}
+    //else {
+    //    strncpy(tmp, data->data, strlen(tmp));
+    //}
+
+
+    char tmp[2*API_CLIENT_MAX_RDATA +1] = "";
+    if (strlen(data->unread_data) > 0) {
+        //DEBUG("OLD DATA: %s\n\n", data->unread_data);
+        strcpy(tmp, data->unread_data);
+    }
+    strcat(tmp, data->data);
+
+
+
+    // parse data and remove read bytes from string
+    char disko[256] = "";
+    strcpy(disko, "{  \"bever\"");
+    int nread = json_parse(&json, disko, tmp);
+    if (nread < 0) {
+        ERROR("ABORT!!!!!!\n");
+        return CURLE_WRITE_ERROR;
+    }
+    // nread is the index in a strcat string so index doesn't correspond with data->data
+
+    //data->data[nread] = '\0';
+    //
+    //DEBUG("NEW DATA: %s\n\n", data->data);
+
+    bytes_read += nread;
+    //DEBUG("UNREAD: %s\n", data_unread);
+    
+    strcpy(data->unread_data, ptr+nread);
+    //memcpy(data->unread_data, ptr+nread, chunksize-nread);
+    //data->data[chunksize-nread] = '\0';
+
+
+    DEBUG("Bytes read: %d, total: %d\n", nread, bytes_read);
+    //DEBUG("DATA: %s\n", data->data);
+    return chunksize;
 }
 
 enum APIClientReqResult ac_req_get(struct APIClient *client, const char* url, struct APIClientRData *rdata, char *pdata, long* response_code)
@@ -36,6 +103,7 @@ enum APIClientReqResult ac_req_get(struct APIClient *client, const char* url, st
     //curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, client->timeout);
+    //curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1L);
 
     // when reading data 
     if (rdata != NULL) {
@@ -94,6 +162,7 @@ enum APIClientReqResult ac_get_subscriptions(struct APIClient *client)
 
 void handle_data_cb(struct JSON *json, struct JSONItem *ji)
 {
+    DEBUG("Handling data: %s\n", ji->data);
 }
 
 enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast *pod, time_t since)
@@ -101,6 +170,7 @@ enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast
     long status_code;
     char url[256] = "";
     char pod_json[PODCAST_MAX_SERIALIZED] = "";
+    json = json_init(handle_data_cb);
 
     if (podcast_serialize(pod, pod_json) < 0) {
         ERROR("Failed to get podcast\n");
@@ -117,6 +187,7 @@ enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast
 
     struct APIClientRData rdata;
     rdata.data[0] = '\0';
+    rdata.unread_data[0] = '\0';
     rdata.size = 0;
 
     enum APIClientReqResult res;
@@ -139,9 +210,35 @@ enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast
 
     DEBUG("status_code: %ld\n", status_code);
     //DEBUG("data: %s\n", rdata.data);
+    char buf[] = "{ \
+                  \"actions\": [ \
+                    { \
+                      \"podcast\": \"https://media.rss.com/steakandeggscast/feed.xml\", \
+                      \"episode\": \"https://media.rss.com/steakandeggscast/2023_09_22_09_18_08_1463937f-c833-4c4a-b27e-b66848bf013a.mp3\", \
+                      \"timestamp\": \"2023-11-04T07:13:17\", \
+                      \"guid\": \"d78bd6a9-e843-4dde-a6d7-b1ade25affbd\", \
+                      \"position\": [], \
+                      \"started\": 6233, \
+                      \"total\": 6811, \
+                      \"action\": \"PLAY\" \
+                    }, \
+                    { \
+                      \"podcast\": \"https://anchor.fm/s/23c4a914/podcast/rss\", \
+                      \"episode\": \"https://anchor.fm/s/23c4a914/podcast/play/78070380/https%3A%2F%2Fd3ctxlq1ktw2nl.cloudfront.net%2Fstaging%2F2023-10-2%2F353801394-44100-2-14630cd552cd6.mp3\", \
+                      \"timestamp\": \"2023-11-04T09:31:34\", \
+                      \"guid\": \"7793b3d3-6494-4a8f-bce8-6740beff9ed6\", \
+                      \"position\": 2741, \
+                      \"started\": 2099, \
+                      \"total\": 6350, \
+                      \"bever\" : true, \
+                      \"disko\" : false, \
+                      \"action\": \"PLAY\" \
+                    } \
+                  ], \
+                  \"timestamp\": 1699090473 \
+                } \
+                ";
     
-    struct JSON json = json_init(handle_data_cb);
-    json_parse_str(&json, rdata.data);
 
     return API_CLIENT_REQ_SUCCESS;
 }
