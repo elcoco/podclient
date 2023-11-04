@@ -9,7 +9,6 @@
 #define JSON_MAX_DATA 256
 #define JSON_MAX_STACK 16
 #define JSON_MAX_BUF  20000
-#define JSON_MAX_CHUNKS 2
 
 #define JSON_ERR_CHARS_CONTEXT 50
 
@@ -49,8 +48,9 @@ struct Position {
     int npos;      // char counter
     char *c;            // pointer to current char in json string
     int length;
-    char *chunks[JSON_MAX_CHUNKS];
-    int nchunk;
+    char **chunks;
+    size_t max_chunks;
+    size_t cur_chunk;
 };
 
 struct JSON {
@@ -72,7 +72,8 @@ struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *
 // When a JSONItem is found the handle_data_cb() callback is ran.
 // If something is found, the amount of bytes read is returned.
 // This is useful so we can continue reading when new data is available next time
-size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new);
+//size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new);
+size_t json_parse(struct JSON *json, char **chunks, size_t nchunks);
 
 
 

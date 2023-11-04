@@ -43,30 +43,22 @@ static size_t ac_req_read_cb(char *ptr, size_t size, size_t nmemb, void *userdat
     memcpy(data->data, ptr, chunksize);
     data->data[chunksize] = '\0';
 
-
-    //// check if there is old unread data
-    //if (strlen(data->unread_data) > 0) {
-    //    strncpy(tmp, data->unread_data, strlen(tmp));
-    //    strcat(tmp, data->data);
-    //}
-    //else {
-    //    strncpy(tmp, data->data, strlen(tmp));
-    //}
-
-
-    char tmp[2*API_CLIENT_MAX_RDATA +1] = "";
-    if (strlen(data->unread_data) > 0) {
-        //DEBUG("OLD DATA: %s\n\n", data->unread_data);
-        strcpy(tmp, data->unread_data);
-    }
-    strcat(tmp, data->data);
-
-
+    // TODO if unread_data is empty, json_parse doesn't work
+    //char *chunks[2] = {data->unread_data, data->data};
 
     // parse data and remove read bytes from string
-    char disko[256] = "";
-    strcpy(disko, "{  \"bever\"");
-    int nread = json_parse(&json, disko, tmp);
+    char *chunks[2];
+    if (strlen(data->unread_data) > 0) {
+        chunks[0] = data->unread_data;
+        chunks[1] = data->data;
+    }
+    else {
+        chunks[0] = data->data;
+        chunks[1] = NULL;
+    }
+
+
+    int nread = json_parse(&json, chunks, sizeof(chunks)/sizeof(*chunks));
     if (nread < 0) {
         ERROR("ABORT!!!!!!\n");
         return CURLE_WRITE_ERROR;
@@ -80,7 +72,11 @@ static size_t ac_req_read_cb(char *ptr, size_t size, size_t nmemb, void *userdat
     bytes_read += nread;
     //DEBUG("UNREAD: %s\n", data_unread);
     
-    strcpy(data->unread_data, ptr+nread);
+
+    if (nread < chunksize)
+        strcpy(data->unread_data, ptr+nread);
+    else
+        data->unread_data[0] = '\0';
     //memcpy(data->unread_data, ptr+nread, chunksize-nread);
     //data->data[chunksize-nread] = '\0';
 
@@ -168,7 +164,9 @@ void handle_data_cb(struct JSON *json, struct JSONItem *ji)
 enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast *pod, time_t since)
 {
     long status_code;
-    char url[256] = "";
+    char url[512] = "";
+    char param[128] = "";
+
     char pod_json[PODCAST_MAX_SERIALIZED] = "";
     json = json_init(handle_data_cb);
 
@@ -180,7 +178,9 @@ enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast
     sprintf(url, API_CLIENT_URL_FMT, client->server, API_CLIENT_EPISODE_ACTION);
 
     if (since >= 0)
-        sprintf(url, "%s?since=%ld", url, since);
+        sprintf(param, "?since=%ld", since);
+
+    strncat(url, param, sizeof(url)-strlen(url)-1);
 
     DEBUG("Serialized: %s\n", pod_json);
     DEBUG("url: %s\n", url);

@@ -20,33 +20,27 @@ struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *
     return json;
 }
 
-struct Position pos_init(char *chunk_old, char *chunk_new)
+struct Position pos_init(char **chunks, size_t nchunks)
 {
     struct Position pos;
-    if (chunk_old != NULL) {
-        pos.chunks[0] = chunk_old;
-        pos.chunks[1] = chunk_new;
-    }
-    else {
-        pos.chunks[0] = chunk_new;
-        pos.chunks[1] = NULL;
-    }
+    pos.max_chunks = nchunks;
+    pos.chunks = chunks;
     pos.c = pos.chunks[0];
     pos.npos = 0;
     pos.length = strlen(pos.c);
-    pos.nchunk = 0;
+    pos.cur_chunk = 0;
     return pos;
 }
 
 static int pos_next(struct Position *pos)
 {
-    if (pos->npos >= pos->length) {
-        INFO("HERE!\n");
-        if (pos->nchunk < JSON_MAX_CHUNKS &&  pos->chunks[pos->nchunk+1] != NULL) {
-            INFO("Move to next chunk!\n");
-            pos->nchunk++;
+    //INFO("pos: %d, len= %d\n", pos->npos, pos->length);
+    if (pos->npos >= pos->length-1) {
+        if (pos->cur_chunk < pos->max_chunks-1 &&  pos->chunks[pos->cur_chunk+1] != NULL) {
+            INFO("Move to next chunk, %ld!\n", pos->cur_chunk+1);
+            pos->cur_chunk++;
             pos->npos = 0;
-            pos->c = pos->chunks[pos->nchunk];
+            pos->c = pos->chunks[pos->cur_chunk];
             pos->length = strlen(pos->c);
             return 0;
         }
@@ -55,7 +49,6 @@ static int pos_next(struct Position *pos)
             return -1;
         }
     }
-    INFO("skipping!\n");
     (pos->c)++;
     (pos->npos)++;
     return 0;
@@ -80,21 +73,14 @@ static enum JSONParseResult fforward_skip_escaped(struct Position* pos, char* se
     // don't return these chars with buffer
     ignore_lst = (ignore_lst) ? ignore_lst : "";
     unwanted_lst = (unwanted_lst) ? unwanted_lst : "";
-    //DEBUG("looking for %s in %s\n", search_lst, pos->c);
 
     while (1) {
-        //if (pos->npos >= pos->length) {
-        //    ERROR("Out of bounds\n");
-        //    return JSON_PARSE_END_OF_DATA;
-        //}
         if (strchr(search_lst, *(pos->c))) {
             // check if previous character whas a backslash which indicates escaped
             if (pos->npos > 0 && *(pos->c-1) == '\\') {
-                //DEBUG("ignoring escaped: %c, %c\n", *(pos->c-1), *(pos->c));
             }
             else
                 break;
-            //DEBUG("found char: %c\n", *(pos->c));
         }
         if (strchr(unwanted_lst, *(pos->c)))
             return JSON_PARSE_ILLEGAL_CHAR;
@@ -113,10 +99,6 @@ static enum JSONParseResult fforward_skip_escaped(struct Position* pos, char* se
     if (ptr != NULL)
         *ptr = '\0';
 
-    //char ret = *(pos->c);
-
-    //if (buf)
-    //    DEBUG("!!!!!!!!!!: >%s<\n", buf);
     return JSON_PARSE_SUCCESS;
 }
 
@@ -130,11 +112,6 @@ static struct JSONItem json_item_init(enum JSONDtype dtype, char *data)
 
 static int stack_put(struct JSON *json, struct JSONItem ji)
 {
-    //if (json->stack_pos > JSON_MAX_STACK -1) {
-    //    ERROR("Can not put, stack is full!\n");
-    //    return -1;
-    //}
-
     ASSERTF(json->stack_pos <= JSON_MAX_STACK -1, "Can't PUT, stack is full!\n");
 
     (json->stack_pos)++;
@@ -144,11 +121,6 @@ static int stack_put(struct JSON *json, struct JSONItem ji)
 
 static int stack_pop(struct JSON *json)
 {
-    // err is stack is empty
-    //if (json->stack_pos < 0) {
-    //    ERROR("Can not pop, stack is empty!\n");
-    //    return -1;
-    //}
     ASSERTF(json->stack_pos >= 0, "Can't POP, stack is empty!\n");
 
     memset(&(json->stack[json->stack_pos]), 0, sizeof(struct Position));
@@ -270,7 +242,7 @@ static void print_parse_error(struct Position *pos, const char *msg) {
     ERROR("\n%s%s%c%s<--%s%s\n", lctext, JRED, *(pos->c), JBLUE, JRESET, rctext);
 }
 
-int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
+static int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
 {
     char quote[2] = "";
     quote[0] = *(pos->c);
@@ -289,6 +261,7 @@ int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
     else if (stack_last_is_object(json))
         ji = json_item_init(JSON_KEY, buf);
 
+    json->handle_data_cb(json, &ji);
     stack_put(json, ji);
     if (pos_next(pos) < 0)
         return -1;
@@ -301,7 +274,7 @@ int json_parse_string(struct JSON *json, struct Position *pos, char *buf)
     return 0;
 }
 
-int json_parse_number(struct JSON *json, struct Position *pos, char *buf)
+static int json_parse_number(struct JSON *json, struct Position *pos, char *buf)
 {
     if (fforward_skip_escaped(pos, ", ]}\n", "0123456789-null.", NULL, "\n", buf) < JSON_PARSE_SUCCESS) {
         print_parse_error(pos, "Failed to find end of number\n");
@@ -316,7 +289,7 @@ int json_parse_number(struct JSON *json, struct Position *pos, char *buf)
     return 0;
 }
 
-int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
+static int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
 {
     if (fforward_skip_escaped(pos, ", ]}\n", "truefalse", NULL, "\n", buf) < JSON_PARSE_SUCCESS) {
         ERROR("Unexpected character while parsing boolean: %c\n", *pos->c);
@@ -332,14 +305,17 @@ int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
 }
 
 
-size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new)
+//size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new)
+size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
 {
     //DEBUG("Parsing: %s\n", data);
 
     int nread = 0;
-    struct Position pos = pos_init(chunk_old, chunk_new);
+    struct Position pos = pos_init(chunks, nchunks);
+    printf("input: >%s<\n", pos.c);
 
-    char tmp[256] = "";
+    // TODO set to reasonable size
+    char tmp[2048] = "";
 
     while (1) {
 
@@ -353,7 +329,6 @@ size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new)
                 return -1;
             }
         }
-        INFO("Found: >%c<\n", *pos.c);
 
         if (*pos.c == '{') {
             if (stack_last_is_object(json)) {
