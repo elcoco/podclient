@@ -1,4 +1,5 @@
 #include "api_client.h"
+#include "lib/json/json.h"
 #include "podcast.h"
 
 struct JSON json;
@@ -143,11 +144,6 @@ enum APIClientReqResult ac_get_subscriptions(struct APIClient *client)
     return API_CLIENT_REQ_SUCCESS;
 }
 
-void handle_data_cb(struct JSON *json, struct JSONItem *ji)
-{
-    DEBUG("Handling data: %s\n", ji->data);
-}
-
 enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast *pod, time_t since)
 {
     long status_code;
@@ -155,7 +151,7 @@ enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast
     char param[128] = "";
 
     char pod_json[PODCAST_MAX_SERIALIZED] = "";
-    json = json_init(handle_data_cb);
+    json = json_init(json_handle_data_cb);
 
     if (podcast_serialize(pod, pod_json) < 0) {
         ERROR("Failed to get podcast\n");

@@ -8,6 +8,7 @@
 #include "utils.h"
 #include "api_client.h"
 #include "podcast.h"
+#include "lib/json/json.h"
 
 #define SUCCESS 0
 
@@ -94,8 +95,68 @@ int parse_args(struct State *s, int argc, char **argv)
     return SUCCESS;
 }
 
+void read_json()
+{
+    // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
+    const char *path = "data/sample01.json";
+    const int chunk_size = 256;
+    FILE *fp;
+    size_t n;
+    struct JSON json;
+    char chunk[chunk_size+1];
+    char chunk_unread[chunk_size+1];
+    chunk[0] = '\0';
+    chunk_unread[0] = '\0';
+    char *chunks[2];
+
+    json = json_init(json_handle_data_cb);
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        DEBUG("no such file, %s\n", path);
+        return;
+    }
+
+    while ((n = fread(chunk, 1, chunk_size, fp) > 0)) {
+        printf("\n");
+        DEBUG("CHUNK 0: >>%s<<\n", chunk_unread);
+        DEBUG("CHUNK 1: >>%s<<\n", chunk);
+
+
+        if (strlen(chunk_unread) > 0) {
+            chunks[0] = chunk_unread;
+            chunks[1] = chunk;
+        }
+        else {
+            chunks[0] = chunk;
+            chunks[1] = NULL;
+        }
+
+        //DEBUG("read: %s\n", chunk);
+
+        int nread = json_parse(&json, chunks, sizeof(chunks)/sizeof(*chunks));
+        if (nread < 0) {
+            DEBUG("JSON returns 0 read chars\n");
+            break;
+        }
+
+        if (nread < chunk_size && nread != 0)
+            strcpy(chunk_unread, chunk+nread);
+        else
+            chunk_unread[0] = '\0';
+        //DEBUG("Read: %d of %d\n", nread, chunk_size);
+    
+    }
+
+    fclose(fp);
+
+}
+
 int main(int argc, char **argv)
 {
+    read_json();
+    return 0;
+
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {
         show_help(&s);

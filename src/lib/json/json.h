@@ -21,21 +21,35 @@
 #define JCYAN    "\x1B[36m"
 #define JWHITE   "\x1B[37m"
 
+#define ASSERTF(A, M, ...) if(!(A)) {ERROR(M, ##__VA_ARGS__); assert(A); }
+
 enum JSONDtype {
-    JSON_UNKNOWN,
-    JSON_STRING,
-    JSON_NUMBER,
-    JSON_BOOL,
-    JSON_OBJECT,
-    JSON_ARRAY,
-    JSON_KEY
+    JSON_DTYPE_UNKNOWN,
+    JSON_DTYPE_STRING,
+    JSON_DTYPE_NUMBER,
+    JSON_DTYPE_BOOL,
+    JSON_DTYPE_OBJECT,
+    JSON_DTYPE_ARRAY,
+    JSON_DTYPE_KEY
+};
+
+// Event is passed to callback when data is found
+enum JSONEvent {
+    JSON_EV_KEY,
+    JSON_EV_STRING,
+    JSON_EV_NUMBER,
+    JSON_EV_BOOL,
+    JSON_EV_OBJECT_START,
+    JSON_EV_OBJECT_END,
+    JSON_EV_ARRAY_START,
+    JSON_EV_ARRAY_END
 };
 
 enum JSONParseResult {
-    JSON_PARSE_ERROR,
-    JSON_PARSE_UNEXPECTED_CHAR,
     JSON_PARSE_ILLEGAL_CHAR,
+    JSON_PARSE_INCOMPLETE,      // when eg closing quote is not found, this is common when streaming data
     JSON_PARSE_END_OF_DATA,
+    JSON_PARSE_SUCCESS_END_OF_DATA,     // data is successfully parsed but end of data is found
     JSON_PARSE_SUCCESS
 };
 
@@ -55,18 +69,17 @@ struct Position {
 
 struct JSON {
     // call this callback everytime a new JSONItem is discovered
-    void(*handle_data_cb)(struct JSON *json, struct JSONItem *ji);
+    void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev);
 
     // traceback back to root item
     struct JSONItem stack[JSON_MAX_STACK];
 
     // index of current position in stack
     int stack_pos;
-    struct JSONItem *stack_ptr;
 };
 
 
-struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *ji));
+struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev));
 
 // Pass in string and parse.
 // When a JSONItem is found the handle_data_cb() callback is ran.
@@ -75,7 +88,10 @@ struct JSON json_init(void(*handle_data_cb)(struct JSON *json, struct JSONItem *
 //size_t json_parse(struct JSON *json, char *chunk_old, char *chunk_new);
 size_t json_parse(struct JSON *json, char **chunks, size_t nchunks);
 
+struct JSONItem* stack_get_from_end(struct JSON *json, int offset);
 
+void json_handle_data_cb(struct JSON *json, enum JSONEvent ev);
 
+int stack_item_is_type(struct JSON *json, int offset, enum JSONDtype dtype);
 
 #endif
