@@ -427,10 +427,10 @@ void json_handle_data_cb(struct JSON *json, enum JSONEvent ev)
 
     //INFO("ji_prev (%d) is: %s\n", ji_prev->dtype, (ji_prev == NULL) ? "NULL" : ji_prev->data);
     if (ji_prev != NULL && ji_prev->dtype == JSON_DTYPE_KEY) {
-        INFO("%s:\t%s\n", ji_prev->data, ji->data);
+        INFO("%s:\t[%s:%d] %s\n", ji_prev->data, dtype_map[ji->dtype], strlen(ji->data), ji->data);
     }
     else {
-        INFO("%s\n", ji->data);
+        INFO("[%s] %s\n", dtype_map[ji->dtype], ji->data);
     }
 
     //DEBUG("Handling data: %s\n", ji->data);
@@ -445,7 +445,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
 
     // TODO set to reasonable size and protected for buffer overflow
     // fforward_skip_escaped should return JSON_PARSE_BUFFER_OVERFLOW
-    char tmp[2048] = "";
+    char tmp[JSON_MAX_PARSE_BUFFER] = "";
 
     while (1) {
         // Instead of using a buffer, the char that we're searching for could be replaced by \0

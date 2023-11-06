@@ -6,9 +6,19 @@
 #include <string.h>
 #include <assert.h>
 
+// Max data length that can be in a JSONItem to hold data like: strings, numbers or bool
+// If too small, strings will be cut off. Streams will not become corrupted.
 #define JSON_MAX_DATA 256
-#define JSON_MAX_STACK 16
-#define JSON_MAX_BUF  20000
+
+// Holds JSONItems and represents the path from root to the currently parsed item
+// eg: {object, key, array, string}
+// Everytime the last object is done parsing, it is removed from the stack.
+// When a new object is found, it is pushed onto the stack.
+#define JSON_MAX_STACK 8
+
+// The buffer that holds the temporary data that is copied to the JSONItem while parsing
+// If it is too small, the stream data will probably become corrupt
+#define JSON_MAX_PARSE_BUFFER 1024
 
 #define JSON_ERR_CHARS_CONTEXT 50
 
@@ -31,6 +41,16 @@ enum JSONDtype {
     JSON_DTYPE_OBJECT,
     JSON_DTYPE_ARRAY,
     JSON_DTYPE_KEY
+};
+
+static const char *dtype_map[] = {
+    "UNKNOWN",
+    "STRING",
+    "NUMBER",
+    "BOOL",
+    "OBJECT",
+    "ARRAY",
+    "KEY"
 };
 
 // Event is passed to callback when data is found

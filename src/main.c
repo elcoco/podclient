@@ -99,7 +99,7 @@ void read_json()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const char *path = "data/sample01.json";
-    const int chunk_size = 256;
+    const int chunk_size = 512;
     FILE *fp;
     size_t n;
     struct JSON json;
@@ -108,6 +108,7 @@ void read_json()
     chunk[0] = '\0';
     chunk_unread[0] = '\0';
     char *chunks[2];
+
 
     json = json_init(json_handle_data_cb);
 
@@ -118,9 +119,9 @@ void read_json()
     }
 
     while ((n = fread(chunk, 1, chunk_size, fp) > 0)) {
-        printf("\n");
-        DEBUG("CHUNK 0: >>%s<<\n", chunk_unread);
-        DEBUG("CHUNK 1: >>%s<<\n", chunk);
+        //printf("\n");
+        //DEBUG("CHUNK 0: >>%s<<\n", chunk_unread);
+        //DEBUG("CHUNK 1: >>%s<<\n", chunk);
 
 
         if (strlen(chunk_unread) > 0) {
@@ -147,6 +148,7 @@ void read_json()
         //DEBUG("Read: %d of %d\n", nread, chunk_size);
     
     }
+    INFO("CUR SIZE: json:%ld \n", sizeof(json));
 
     fclose(fp);
 
