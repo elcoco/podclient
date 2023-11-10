@@ -19,7 +19,7 @@ struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev
     return json;
 }
 
-struct Position pos_init(char **chunks, size_t nchunks)
+static struct Position pos_init(char **chunks, size_t nchunks)
 {
     struct Position pos;
     pos.max_chunks = nchunks;
@@ -427,7 +427,7 @@ void json_handle_data_cb(struct JSON *json, enum JSONEvent ev)
 
     //INFO("ji_prev (%d) is: %s\n", ji_prev->dtype, (ji_prev == NULL) ? "NULL" : ji_prev->data);
     if (ji_prev != NULL && ji_prev->dtype == JSON_DTYPE_KEY) {
-        INFO("%s:\t[%s:%d] %s\n", ji_prev->data, dtype_map[ji->dtype], strlen(ji->data), ji->data);
+        INFO("%s:\t[%s:%ld] %s\n", ji_prev->data, dtype_map[ji->dtype], strlen(ji->data), ji->data);
     }
     else {
         INFO("[%s] %s\n", dtype_map[ji->dtype], ji->data);
