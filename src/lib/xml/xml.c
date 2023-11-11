@@ -449,9 +449,9 @@ static enum XMLParseResult xml_parse_string(struct XML *xml, struct XMLPosition 
 
         // This also errors if there is no more data at all. In this case it is not an error
         if ( res < XML_PARSE_SUCCESS) {
-            ERROR("Failed to find end of string, may be due to small buffers!\n");
-            ERROR("last data: >%s<\n", buf);
-            ERROR("err: >%d<\n", res);
+            ERROR("Failed to find end of string\n");
+            //ERROR("last data: >%s<\n", buf);
+            //ERROR("err: >%d<\n", res);
             return res;
         }
 
@@ -479,8 +479,7 @@ static enum XMLParseResult parse_tag(struct XML *xml, struct XMLPosition *pos)
     struct XMLPosition bak = pos_copy(pos);
 
     if (fforward_skip_escaped(pos, ">", NULL, NULL, "\n", buf, XML_MAX_PARSE_BUFFER) < XML_PARSE_SUCCESS) {
-        DEBUG("Failed to find closing character, may be caused by small buffers!\n");
-        DEBUG("Till here: %s\n", buf);
+        DEBUG("Failed to find closing character in tag\n");
         return XML_PARSE_INCOMPLETE;
     }
 
