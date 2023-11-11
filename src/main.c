@@ -158,12 +158,12 @@ void test_xml()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const char *path = "data/test.xml";
-    const int chunk_size = 15000;
+    const int nchunks = 15000;
     FILE *fp;
     size_t n;
     struct XML xml;
-    char chunk[chunk_size+1];
-    char chunk_unread[chunk_size+1];
+    char chunk[nchunks+1];
+    char chunk_unread[nchunks+1];
     chunk[0] = '\0';
     chunk_unread[0] = '\0';
     char *chunks[2];
@@ -176,18 +176,12 @@ void test_xml()
         return;
     }
 
-    while ((n = fread(chunk, 1, chunk_size, fp) > 0)) {
-        //printf("\n");
-        //DEBUG("CHUNK 0: >>%s<<\n", chunk_unread);
-        //DEBUG("CHUNK 1: >>%s<<\n", chunk);
+    while (!feof(fp)) {
 
-        DEBUG("N = %ld\n", n*chunk_size);
-        chunk[n*chunk_size] = '\0';
+        n = fread(chunk, 1, nchunks, fp);
 
-        if (strlen(chunk) < chunk_size) {
-            INFO("END OF data: %ld, chunksize: %d\n", n, chunk_size);
-            break;
-        }
+        chunk[n] = '\0';
+
         if (strlen(chunk_unread) > 0) {
             chunks[0] = chunk_unread;
             chunks[1] = chunk;
@@ -197,21 +191,16 @@ void test_xml()
             chunks[1] = NULL;
         }
 
-
-
-        //DEBUG("read: %s\n", chunk);
-
         int nread = xml_parse(&xml, chunks, sizeof(chunks)/sizeof(*chunks));
         if (nread < 0) {
             DEBUG("JSON returns 0 read chars\n");
             break;
         }
 
-        if (nread < chunk_size && nread != 0)
+        if (nread < nchunks && nread != 0)
             strcpy(chunk_unread, chunk+nread);
         else
             chunk_unread[0] = '\0';
-        //DEBUG("Read: %d of %d\n", nread, chunk_size);
     
     }
     INFO("CUR SIZE: json:%ld \n", sizeof(xml));

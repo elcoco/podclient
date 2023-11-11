@@ -20,12 +20,13 @@
 
 // The buffer that holds the temporary data that is copied to the XMLItem while parsing
 // If it is too small, the stream data will probably become corrupt
-#define XML_MAX_PARSE_BUFFER 16000
+#define XML_MAX_PARSE_BUFFER 15000
 
 #define XML_ERR_CHARS_CONTEXT 50
 
 #define XML_MAX_ATTR_KEY 256
 #define XML_MAX_ATTR_VALUE 256
+#define XML_MAX_SKIP_STR 8
 
 #define XML_CHAR_LESS_THAN      "&lt"
 #define XML_CHAR_GREATER_THAN   "&gt"
@@ -36,6 +37,7 @@
 #define XML_CHAR_COMMENT_END    "-->"
 #define XML_CHAR_CDATA_START    "![CDATA["
 #define XML_CHAR_CDATA_END      "]]>"
+#define XML_CHAR_HEADER_START   "?xml "
 
 #define XRESET   "\x1B[0m"
 #define XRED     "\x1B[31m"
@@ -49,14 +51,12 @@
 enum XMLDtype {
     XML_DTYPE_UNKNOWN,
     XML_DTYPE_STRING,
-    XML_DTYPE_NUMBER,
-    XML_DTYPE_BOOL,
-    XML_DTYPE_PREFIX,       // is part of a tag
     XML_DTYPE_TAG,
 };
 
 // Event is passed to callback when data is found
 enum XMLEvent {
+    XML_EV_HEADER,
     XML_EV_KEY,
     XML_EV_STRING,
     XML_EV_NUMBER,
@@ -66,12 +66,12 @@ enum XMLEvent {
 };
 
 enum XMLParseResult {
-    XML_PARSE_NOT_FOUND,
+    XML_PARSE_UNEXPECTED,       // eg. an unexpected tag. closing a tag that wasn't previously opened
+    XML_PARSE_NOT_FOUND,        // search string not found
     XML_PARSE_BUFFER_OVERFLOW,
-    XML_PARSE_ILLEGAL_CHAR,
-    XML_PARSE_INCOMPLETE,      // when eg closing quote is not found, this is common when streaming data
-    XML_PARSE_END_OF_DATA,
-    XML_PARSE_SUCCESS_END_OF_DATA,     // data is successfully parsed but end of data is found
+    XML_PARSE_INCOMPLETE,           // when eg closing quote is not found, this is common when streaming data
+    XML_PARSE_END_OF_DATA,          // end of data (position), didn't find result in data
+    XML_PARSE_SUCCESS_END_OF_DATA,  // data is successfully parsed but end of data is found
     XML_PARSE_SUCCESS
 };
 struct XMLPosition {
@@ -86,6 +86,7 @@ struct XMLPosition {
 struct XMLItem {
     enum XMLDtype dtype;
     char data[XML_MAX_DATA];
+    char *param;
 };
 
 // the stuff in the opening tag eg: <book category="bla">
@@ -103,6 +104,11 @@ struct XML {
 
     // index of current position in stack
     int stack_pos;
+
+    // If set, this look for this string before parsing anything.
+    // This way we can stop storing super long strings that we can not store anyway
+    // because of small memory on MCU
+    char skip_until[XML_MAX_SKIP_STR];
 };
 
 
