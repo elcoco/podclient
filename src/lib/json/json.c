@@ -10,12 +10,13 @@
 
 
 
-struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev))
+struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev, void *user_data))
 {
     struct JSON json;
     json.handle_data_cb = handle_data_cb;
     json.stack_pos = -1;
     memset(json.stack, 0, sizeof(json.stack));
+    json.user_data = NULL;
     return json;
 }
 
@@ -344,9 +345,9 @@ enum JSONParseResult json_parse_string(struct JSON *json, struct Position *pos, 
 
     stack_put(json, ji);
     if (ji.dtype == JSON_DTYPE_KEY)
-        json->handle_data_cb(json, JSON_EV_KEY);
+        json->handle_data_cb(json, JSON_EV_KEY, json->user_data);
     else
-        json->handle_data_cb(json, JSON_EV_STRING);
+        json->handle_data_cb(json, JSON_EV_STRING, json->user_data);
 
     if (!stack_last_is_key(json))
         stack_pop(json);
@@ -366,7 +367,7 @@ static int json_parse_number(struct JSON *json, struct Position *pos, char *buf)
     DEBUG("FOUND NUMBER: %s\n", buf);
     struct JSONItem ji = json_item_init(JSON_DTYPE_NUMBER, buf);
     stack_put(json, ji);
-    json->handle_data_cb(json, JSON_EV_NUMBER);
+    json->handle_data_cb(json, JSON_EV_NUMBER, json->user_data);
     stack_pop(json);
     return 0;
 }
@@ -379,12 +380,12 @@ static int json_parse_bool(struct JSON *json, struct Position *pos, char *buf)
     }
     struct JSONItem ji = json_item_init(JSON_DTYPE_BOOL, buf);
     stack_put(json, ji);
-    json->handle_data_cb(json, JSON_EV_BOOL);
+    json->handle_data_cb(json, JSON_EV_BOOL, json->user_data);
     stack_pop(json);
     return 0;
 }
 
-void json_handle_data_cb(struct JSON *json, enum JSONEvent ev)
+void json_handle_data_cb(struct JSON *json, enum JSONEvent ev, void *user_data)
 {
     /* Print out json in a sort of structured way */
     const char *space = "  ";
@@ -471,7 +472,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
             }
             struct JSONItem ji = json_item_init(JSON_DTYPE_OBJECT, "");
             stack_put(json, ji);
-            json->handle_data_cb(json, JSON_EV_OBJECT_START);
+            json->handle_data_cb(json, JSON_EV_OBJECT_START, json->user_data);
             nread = pos.npos;
             if (pos_next(&pos) < 0) {
                 nread = pos.npos;
@@ -483,7 +484,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
                 print_parse_error(json, &pos, "Unexpected end of object\n");
                 return -1;
             }
-            json->handle_data_cb(json, JSON_EV_OBJECT_END);
+            json->handle_data_cb(json, JSON_EV_OBJECT_END, json->user_data);
             stack_pop(json);
             nread = pos.npos;
             if (pos_next(&pos) < 0) {
@@ -499,7 +500,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
 
             struct JSONItem ji = json_item_init(JSON_DTYPE_ARRAY, "");
             stack_put(json, ji);
-            json->handle_data_cb(json, JSON_EV_ARRAY_START);
+            json->handle_data_cb(json, JSON_EV_ARRAY_START, json->user_data);
             nread = pos.npos;
             if (pos_next(&pos) < 0) {
                 nread = pos.npos;
@@ -511,7 +512,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
                 print_parse_error(json, &pos, "Unexpected end of array\n");
                 return -1;
             }
-            json->handle_data_cb(json, JSON_EV_ARRAY_END);
+            json->handle_data_cb(json, JSON_EV_ARRAY_END, json->user_data);
             stack_pop(json);
             nread = pos.npos;
             if (pos_next(&pos) < 0) {

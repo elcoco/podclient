@@ -14,7 +14,6 @@
 #define SUCCESS 0
 
 
-
 struct State {
     char server[API_CLIENT_MAX_SERVER];
     char user[API_CLIENT_MAX_USER];
@@ -22,7 +21,7 @@ struct State {
     int  port;
 };
 
-struct State state_init()
+static struct State state_init()
 {
     struct State s;
     s.server[0] = '\0';
@@ -32,7 +31,7 @@ struct State state_init()
     return s;
 }
 
-void show_help(struct State *s)
+static void show_help(struct State *s)
 {
     printf("PODCLIENT - Gotta catch 'm all\n");
     printf("  -s    server\n");
@@ -51,7 +50,7 @@ static int atoi_err(char *str, int *buf)
     return 1;
 }
 
-int parse_args(struct State *s, int argc, char **argv)
+static int parse_args(struct State *s, int argc, char **argv)
 {
     int option;
     DEBUG("Parsing args\n");
@@ -96,7 +95,7 @@ int parse_args(struct State *s, int argc, char **argv)
     return SUCCESS;
 }
 
-void read_json()
+static void test_json()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const char *path = "data/sample01.json";
@@ -154,7 +153,7 @@ void read_json()
     fclose(fp);
 }
 
-void test_xml()
+static void test_xml()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const char *path = "data/test.xml";
@@ -210,11 +209,11 @@ void test_xml()
 
 int main(int argc, char **argv)
 {
-    //read_json();
+    //test_json();
     //return 0;
     //
-    test_xml();
-    return 0;
+    //test_xml();
+    //return 0;
     
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {
@@ -229,13 +228,17 @@ int main(int argc, char **argv)
     client.port = s.port;
     client.timeout = 5L;
 
-    //ac_get_subscriptions(&client);
+    struct Podcast pods[API_CLIENT_MAX_SUBSCRIPTIONS];
 
-    struct Podcast pod = podcast_init();
-    pod.action = POD_ACTION_PLAY;
-    strncpy(pod.guid, "2ff5675d-fba1-4bb4-b529-7db1b05fe6f6", PODCAST_MAX_GUID);
-    ac_get_episodes(&client, &pod, -1);
-    //ac_get_episodes(&client, &pod, 1699034956);
+    size_t pods_found = 0;
 
+    //ac_get_actions(&client, -1);
+    ac_get_subscriptions(&client, pods, API_CLIENT_MAX_SUBSCRIPTIONS, &pods_found);
+
+    for (int i=0 ; i<pods_found ; i++) {
+        printf("\n** Parsing: %s\n", pods[i].url);
+        int episodes_found = 0;
+        get_episodes(&client, &pods[i], &episodes_found);
+    }
 
 }

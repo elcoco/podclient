@@ -4,20 +4,29 @@
 struct Podcast podcast_init()
 {
     struct Podcast pod;
-    pod.podcast[0] = '\0';
-    pod.episode[0] = '\0';
-    pod.guid[0] = '\0';
-    pod.timestamp[0] = '\0';
-
-    pod.action = POD_ACTION_UNDEFINED;
-    pod.started = -1;
-    pod.position = -1;
-    pod.total = -1;
-
+    pod.url[0] = '\0';
     return pod;
 }
+struct Episode episode_init()
+{
+    struct Episode ep;
+    ep.url[0] = '\0';
+    ep.guid[0] = '\0';
+    ep.title[0] = '\0';
+    ep.started = -1;
+    ep.position = -1;
+    ep.total = -1;
+
+    return ep;
+}
+
+int podcast_add_episode(struct Podcast *pod, struct Episode ep)
+{
 
 
+}
+
+/*
 int podcast_serialize(struct Podcast *pod, char *buf)
 {
     const char *fmt = "{ \"podcast\" : \"%s\", \
@@ -61,3 +70,4 @@ int podcast_serialize(struct Podcast *pod, char *buf)
                       pod->total);
     return 0;
 }
+*/

@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "lib/xml/xml.h"
 #include "utils.h"
 
 enum PodFields {
@@ -41,18 +42,38 @@ enum PodActions {
     POD_ACTION_FLATTR
 };
 
-#define PODCAST_MAX_PODCAST   256
-#define PODCAST_MAX_EPISODE   256
+#define EPISODE_JSON_FMT "    {\"title\" : \"%s\", \"guid\" : \"%s\", \"url\" : \"%s\"},\n"
+
+#define PODCAST_MAX_URL       256
+#define PODCAST_MAX_EPISODES   32
 #define PODCAST_MAX_GUID      256
+#define PODCAST_MAX_TITLE     256
 #define PODCAST_MAX_ACTION     32
-#define PODCAST_MAX_TIMESTAMP 128
+#define PODCAST_MAX_TIMESTAMP 64
 
 #define PODCAST_MAX_SERIALIZED 1024*2
 
 struct Podcast {
-    char podcast[PODCAST_MAX_PODCAST];
-    char episode[PODCAST_MAX_EPISODE];
+    char url[PODCAST_MAX_URL];
+    char title[PODCAST_MAX_TITLE];
+    size_t ep_length;
+    size_t ep_max;
+};
+
+struct Episode {
+    struct Podcast *podcast;
+    //char podcast_title[PODCAST_MAX_TITLE];
+    char url[PODCAST_MAX_URL];
     char guid[PODCAST_MAX_GUID];
+    char title[PODCAST_MAX_TITLE];
+    int started;
+    int position;
+    int total;
+};
+
+struct EpisodeAction {
+    struct Podcast pod;
+    struct Episode ep;
     enum PodActions action;
     char timestamp[PODCAST_MAX_TIMESTAMP];
     int started;
@@ -61,6 +82,8 @@ struct Podcast {
 };
 
 struct Podcast podcast_init();
+int podcast_add_episode(struct Podcast *pod, struct Episode ep);
+
 int podcast_serialize(struct Podcast *pod, char *buf);
 
 

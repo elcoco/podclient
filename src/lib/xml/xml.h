@@ -20,7 +20,7 @@
 
 // The buffer that holds the temporary data that is copied to the XMLItem while parsing
 // If it is too small, the stream data will probably become corrupt
-#define XML_MAX_PARSE_BUFFER 15000
+#define XML_MAX_PARSE_BUFFER 17 * 1024
 
 #define XML_ERR_CHARS_CONTEXT 50
 
@@ -97,7 +97,7 @@ struct XMLAttr {
 
 struct XML {
     // call this callback everytime a new XMLItem is discovered
-    void(*handle_data_cb)(struct XML *xml, enum XMLEvent ev);
+    void(*handle_data_cb)(struct XML *xml, enum XMLEvent ev, void *user_data);
 
     // traceback back to root item
     struct XMLItem stack[XML_MAX_STACK];
@@ -105,15 +105,24 @@ struct XML {
     // index of current position in stack
     int stack_pos;
 
+    // pointer to userdata is passed to callback
+    void *user_data;
+
     // If set, this look for this string before parsing anything.
     // This way we can stop storing super long strings that we can not store anyway
     // because of small memory on MCU
     char skip_until[XML_MAX_SKIP_STR];
+
+    // how many times didn't we parse anything from given chunks
+    // This is used to see when we should just look for skip_string.
+    int zero_rd_cnt;
 };
 
 
-struct XML xml_init(void(*handle_data_cb)(struct XML *xml, enum XMLEvent ev));
-void xml_handle_data_cb(struct XML *xml, enum XMLEvent ev);
+struct XML xml_init(void(*handle_data_cb)(struct XML *xml, enum XMLEvent ev, void *user_data));
+void xml_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *user_data);
 size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks);
+
+struct XMLItem* xml_stack_get_from_end(struct XML *xml, int offset);
 
 #endif

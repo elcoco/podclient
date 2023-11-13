@@ -6,7 +6,11 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <string.h>
+#include <libgen.h>    // basename, dirname
+#include <sys/stat.h>  // mkdir
+#include <errno.h>
 
 #include <curl/curl.h>
 
@@ -14,19 +18,27 @@
 #include "podcast.h"
 #include "lib/json/json.h"
 
+#define API_CLIENT_BASE_DIR "test"
+#define API_CLIENT_POD_DIR  "podcasts"
 
 #define API_CLIENT_MAX_SERVER 64
 #define API_CLIENT_MAX_USER   64
 #define API_CLIENT_MAX_KEY    64
-#define API_CLIENT_MAX_RDATA  100 * 1024
+#define API_CLIENT_MAX_RDATA  17 * 1024
+#define API_CLIENT_MAX_SUBSCRIPTIONS 64
 
 #define API_CLIENT_URL_FMT    "%s/index.php/apps/gpoddersync/%s"
 #define API_CLIENT_SUBSCRIPTIONS "subscriptions"
 #define API_CLIENT_EPISODE_ACTION "episode_action"
 
 
+#define API_CLIENT_SANITIZE_REMOVE_CHARS "\t\r\n'\"/\\<>"
+#define API_CLIENT_SANITIZE_REPLACE_CHARS "- "
+
+
 #define JSON_READ_CHUNK_SIZE CURL_MAX_WRITE_SIZE
 
+typedef size_t(*curl_write_cb)(char*, size_t, size_t, void*);
 
 enum APIClientReqResult {
     API_CLIENT_REQ_OUT_OF_MEMORY,
@@ -63,13 +75,29 @@ struct APIClient {
 
 };
 
+// Is passed to curl callback as user data.
+struct APIUserData {
+
+    // pointer to array of structs where data should be stored, eg: Podcast or Episode
+    void *data;
+    int data_length;
+
+    // index in pods to current pod
+    int npod;
+
+    // parser object, eg: json or xml
+    void *parser;
+
+    // holds current chunk and unread data from previous chunk
+    char chunk[API_CLIENT_MAX_RDATA+1];
+    char unread_chunk[API_CLIENT_MAX_RDATA+1];
+};
 
 
-enum APIClientReqResult ac_get_subscriptions(struct APIClient *client);
-enum APIClientReqResult ac_get_episodes(struct APIClient *client, struct Podcast *pod, time_t since);
 
-
-
+enum APIClientReqResult ac_get_subscriptions(struct APIClient *client, struct Podcast *pods, size_t pods_length, size_t *pods_found);
+enum APIClientReqResult ac_get_actions(struct APIClient *client, time_t since);
+enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *pod, int *episodes_found);
 
 
 #endif

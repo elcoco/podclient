@@ -89,17 +89,20 @@ struct Position {
 
 struct JSON {
     // call this callback everytime a new JSONItem is discovered
-    void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev);
+    void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev, void *user_data);
 
     // traceback back to root item
     struct JSONItem stack[JSON_MAX_STACK];
 
     // index of current position in stack
     int stack_pos;
+
+    // pointer to userdata is passed to callback
+    void *user_data;
 };
 
 
-struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev));
+struct JSON json_init(void(*handle_data_cb)(struct JSON *json, enum JSONEvent ev, void *user_data));
 
 // Pass in string and parse.
 // When a JSONItem is found the handle_data_cb() callback is ran.
@@ -110,7 +113,7 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks);
 
 struct JSONItem* stack_get_from_end(struct JSON *json, int offset);
 
-void json_handle_data_cb(struct JSON *json, enum JSONEvent ev);
+void json_handle_data_cb(struct JSON *json, enum JSONEvent ev, void *user_data);
 
 int stack_item_is_type(struct JSON *json, int offset, enum JSONDtype dtype);
 
