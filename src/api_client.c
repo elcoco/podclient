@@ -1,5 +1,7 @@
 #include "api_client.h"
 #include "lib/json/json.h"
+#include "lib/xml/xml.h"
+
 #include "podcast.h"
 
 struct JSON json;
@@ -277,6 +279,8 @@ static void episodes_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *use
             if (strcmp(xi_tag->data, "title") == 0) {
                 strcpy(ep->podcast->title, xi->data);
                 //DEBUG("PODCAST TITLE: %s\n", xi->data);
+                printf("   %s\n", xi->data);
+
 
                 char path[256] = "";
                 sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
@@ -287,7 +291,7 @@ static void episodes_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *use
 
             if (strcmp(xi_tag->data, "title") == 0) {
                 strncpy(ep->title, xi->data, PODCAST_MAX_TITLE);
-                //DEBUG("TITLE: %s\n", xi->data);
+                printf("   - %s\n", xi->data);
             }
             else if (strcmp(xi_tag->data, "guid") == 0) {
                 strncpy(ep->guid, xi->data, PODCAST_MAX_GUID);
@@ -345,14 +349,13 @@ enum APIClientReqResult ac_get_subscriptions(struct APIClient *client, struct Po
     return API_CLIENT_REQ_SUCCESS;
 }
 
-enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *pod, int *episodes_found)
+enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *pod)
 {
-    DEBUG("RSS: %s\n", pod->url);
-
     struct APIUserData user_data;
 
     // callback will be called on new parsed xml data
-    struct XML xml = xml_init(episodes_handle_data_cb);
+    struct XML xml = xml_init(xml_handle_data_cb);
+    //struct XML xml = xml_init(episodes_handle_data_cb);
 
     xml.user_data = &user_data;
     struct Episode ep;
@@ -360,13 +363,10 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     ep.podcast = pod;
 
     user_data.data = &ep;
-    //user_data.npod = 0;
-    //user_data.data_length = len;
     user_data.parser = &xml;
     user_data.chunk[0] = '\0';
     user_data.unread_chunk[0] = '\0';
 
-    *episodes_found = 0;
     long status_code;
 
     // callback will be called when curl read new data from stream
@@ -385,9 +385,7 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
         return API_CLIENT_REQ_UNKNOWN_ERROR;
     }
 
-    *episodes_found = user_data.npod;
-
-    DEBUG("status_code: %ld\n", status_code);
+    //DEBUG("status_code: %ld\n", status_code);
     return API_CLIENT_REQ_SUCCESS;
 
 }

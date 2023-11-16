@@ -8,6 +8,8 @@
 #define INFO(M, ...) if(DO_INFO){fprintf(stdout, M, ##__VA_ARGS__);}
 #define ERROR(M, ...) if(DO_ERROR){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
 
+#define ASSERTF(A, M, ...) if(!(A)) {ERROR(M, ##__VA_ARGS__); assert(A); }
+
 static void stack_debug(struct XML *xml);
 static struct XMLPosition pos_init(char **chunks, size_t nchunks);
 static int pos_next(struct XMLPosition *pos);
@@ -16,8 +18,149 @@ static void print_parse_error(struct XML *xml, struct XMLPosition *pos, const ch
 static int stack_put(struct XML *xml, struct XMLItem ji);
 static int stack_pop(struct XML *xml);
 static void stack_debug(struct XML *xml);
+static struct XMLPosition pos_copy(struct XMLPosition *src);
+static enum XMLSearchResult str_search_no_buf(struct XMLPosition *pos, const char *search_str);
 
-static enum XMLParseResult fforward_skip_escaped(struct XMLPosition *pos, char *search_lst, char *expected_lst, char *unwanted_lst, char *ignore_lst, char *buf, size_t buf_size);
+// TODO: add a way to differentiate between Buffer overflow and success in fforward_skip_escaped() and str_search()
+
+static void print_spaces(int n)
+{
+    for (int i=0 ; i<n ; i++)
+        printf(" ");
+}
+
+static int str_starts_with(const char *str, const char *substr)
+{
+    return strncmp(substr, str, strlen(substr)) == 0;
+}
+
+static enum XMLSearchResult fforward_skip_escaped(struct XMLPosition *pos, char *search_lst, char *expected_lst, char *unwanted_lst, char *ignore_lst, char *buf, size_t buf_size)
+{
+    /* fast forward until a char from search_lst is found
+     * Save all chars in buf until a char from search_lst is found
+     * Only save in buf when a char is found in expected_lst
+     * Error is a char from unwanted_lst is found
+     * In case of a buffer overflow, the buffer saving will be disabled
+     *
+     * If buf == NULL,          don't save chars
+     * If expected_lst == NULL, allow all characters
+     * If unwanted_lst == NULL, allow all characters
+     */
+    // TODO char can not be -1
+
+    // save skipped chars that are on expected_lst in buffer
+    char* ptr;
+    size_t n = 0;
+
+    // don't return these chars with buffer
+    ignore_lst = (ignore_lst) ? ignore_lst : "";
+    unwanted_lst = (unwanted_lst) ? unwanted_lst : "";
+
+    int do_save_chars = buf != NULL;
+    if (do_save_chars) {
+        ptr = buf;
+    }
+
+    while (1) {
+        // any char that is on ignore list will make func return
+        if (search_lst == NULL && !strchr(ignore_lst, *(pos->c)))
+            break;
+
+        if (strchr(search_lst, *(pos->c))) {
+            // check if previous character whas a backslash which indicates escaped
+            if (pos->npos > 0 && *(pos->c-1) == '\\')
+                ;
+            else
+                break;
+        }
+        if (strchr(unwanted_lst, *(pos->c)))
+            return XML_SEARCH_SYNTAX_ERROR;
+
+        if (expected_lst != NULL) {
+            if (!strchr(expected_lst, *(pos->c)))
+                return XML_SEARCH_SYNTAX_ERROR;
+        }
+
+        if (do_save_chars && n >= buf_size-1) {
+            // In case of buffer overflow, disable char saving and just skip to search char
+            DEBUG("Buffer overflow (%ld Bytes) while searching for char in: %s\n", n, search_lst);
+            buf[buf_size-1] = '\0';
+            do_save_chars = 0;
+        }
+
+        if (do_save_chars && !strchr(ignore_lst, *(pos->c))) {
+            *ptr++ = *(pos->c);
+            n++;
+        }
+
+        if (pos_next(pos) < 0)
+            return XML_SEARCH_END_OF_DATA;
+    }
+    // terminate string
+    //if (ptr != NULL)
+    if (do_save_chars)
+        *ptr = '\0';
+
+    return XML_SEARCH_SUCCESS;
+}
+
+static enum XMLSearchResult str_search(struct XMLPosition *pos, const char *search_str, char *buf, size_t buf_size)
+{
+    /* Search string and save chars until, and including search_str, in buf */
+    char *ptr = buf;
+    size_t n = 0;
+
+    while (1) {
+
+        if (n >= buf_size-1) {
+            DEBUG("Buffer overflow (%ld Bytes) while searching for string: %s\n", n, search_str);
+            return str_search_no_buf(pos, search_str);
+        }
+
+        *ptr++ = *(pos->c);
+        *ptr = '\0';
+        n++;
+
+        if (strstr(buf, search_str) != NULL)
+            return XML_SEARCH_SUCCESS;
+
+        if (pos_next(pos) < 0)
+            return XML_SEARCH_END_OF_DATA;
+    }
+    return XML_SEARCH_END_OF_DATA;
+}
+
+static enum XMLSearchResult str_search_no_buf(struct XMLPosition *pos, const char *search_str)
+{
+    /* same as above but without saving to buffer */
+    #define buf_size 32+1
+    char buf[buf_size] = "";
+    char *ptr = buf;
+
+    while (1) {
+        
+        if (strlen(buf) == buf_size-1) {
+            // shift string one place to the left
+            char *lptr = buf;
+            char *rptr = buf+1;
+            while (*rptr != '\0')
+                *lptr++ = *rptr++;
+
+            // add char
+            *lptr = *pos->c;
+            *(lptr+1) = '\0';
+        }
+        else {
+            *ptr++ = *pos->c;
+        }
+
+        if (strstr(buf, search_str) != NULL)
+            return XML_SEARCH_SUCCESS;
+
+        if (pos_next(pos) < 0)
+            return XML_SEARCH_END_OF_DATA;
+    }
+}
 
 struct XML xml_init(void(*handle_data_cb)(struct XML *xml, enum XMLEvent ev, void *user_data))
 {
@@ -43,6 +186,15 @@ static struct XMLPosition pos_init(char **chunks, size_t nchunks)
     return pos;
 }
 
+static int pos_has_data(struct XMLPosition *pos)
+{
+    if (pos->npos >= pos->length-1) {
+        if (pos->cur_chunk < pos->max_chunks-1 &&  pos->chunks[pos->cur_chunk+1] != NULL)
+            return -1;
+    }
+    return 1;
+}
+
 static int pos_next(struct XMLPosition *pos)
 {
     //INFO("char: %c, pos: %d, len= %d\n", *pos->c, pos->npos, pos->length);
@@ -65,17 +217,30 @@ static int pos_next(struct XMLPosition *pos)
     return 0;
 }
 
-static int pos_get_next(struct XMLPosition *pos, int offset)
-{
-    /* don't move internal pointer, just return char at offset from current cahr */
-}
-
 static struct XMLPosition pos_copy(struct XMLPosition *src)
 {
     /* Copy struct to new struct */
     struct XMLPosition copy;
     memcpy(&copy, src, sizeof(struct XMLPosition));
     return copy;
+}
+
+static void print_chunks(struct XMLPosition *pos)
+{
+    struct XMLPosition pos_cpy = pos_copy(pos);
+    printf("\n** CHUNKS:\n");
+    int cur_chunk = -1;
+    while (1) {
+        if (cur_chunk != pos_cpy.cur_chunk) {
+            cur_chunk = pos_cpy.cur_chunk;
+            printf("**** CHUNK %d:\n", cur_chunk);
+        }
+        printf("%c", *pos_cpy.c);
+        
+        if (pos_next(&pos_cpy) < 0)
+            break;
+    }
+    printf("END CHUNKS\n\n");
 }
 
 static struct XMLItem xml_item_init(enum XMLDtype dtype, char *data)
@@ -138,14 +303,8 @@ static int stack_put(struct XML *xml, struct XMLItem ji)
 static int stack_pop(struct XML *xml)
 {
     ASSERTF(xml->stack_pos >= 0, "Can't POP, stack is empty!\n");
-
     memset(&(xml->stack[xml->stack_pos]), 0, sizeof(struct XMLPosition));
     (xml->stack_pos)--;
-
-    // if previous value was a key, then also remove this item
-    //if (xml->stack_pos >= 0 && xml->stack[xml->stack_pos].dtype == XML_DTYPE_KEY)
-    //    stack_pop(xml);
-
     return 0;
 }
 
@@ -183,102 +342,10 @@ struct XMLItem* xml_stack_get_from_end(struct XML *xml, int offset)
     return &(xml->stack[xml->stack_pos - offset]);
 }
 
-static enum XMLParseResult fforward_skip_escaped(struct XMLPosition *pos, char *search_lst, char *expected_lst, char *unwanted_lst, char *ignore_lst, char *buf, size_t buf_size)
-{
-    /* fast forward until a char from search_lst is found
-     * Save all chars in buf until a char from search_lst is found
-     * Only save in buf when a char is found in expected_lst
-     * Error is a char from unwanted_lst is found
-     *
-     * If buf == NULL,          don't save chars
-     * If expected_lst == NULL, allow all characters
-     * If unwanted_lst == NULL, allow all characters
-     */
-    // TODO char can not be -1
-
-    // save skipped chars that are on expected_lst in buffer
-    char* ptr = buf;
-    //char* ptr = buf + strlen(buf);
-    size_t n = 0;
-
-    // don't return these chars with buffer
-    ignore_lst = (ignore_lst) ? ignore_lst : "";
-    unwanted_lst = (unwanted_lst) ? unwanted_lst : "";
-
-    while (1) {
-        // any char that is on ignore list will make func return
-        if (search_lst == NULL && !strchr(ignore_lst, *(pos->c)))
-            break;
-
-        if (strchr(search_lst, *(pos->c))) {
-            // check if previous character whas a backslash which indicates escaped
-            if (pos->npos > 0 && *(pos->c-1) == '\\')
-                ;
-            else
-                break;
-        }
-        if (strchr(unwanted_lst, *(pos->c)))
-            return XML_PARSE_UNEXPECTED;
-
-        if (expected_lst != NULL) {
-            if (!strchr(expected_lst, *(pos->c)))
-                return XML_PARSE_UNEXPECTED;
-        }
-
-        if (n >= buf_size) {
-            ERROR("Buffer full: %ld\n", n);
-            return XML_PARSE_BUFFER_OVERFLOW;
-        }
-
-        if (buf != NULL && !strchr(ignore_lst, *(pos->c))) {
-            *ptr++ = *(pos->c);
-            n++;
-        }
-
-        if (pos_next(pos) < 0)
-            return XML_PARSE_END_OF_DATA;
-    }
-    // terminate string
-    if (ptr != NULL)
-        *ptr = '\0';
-
-    return XML_PARSE_SUCCESS;
-}
-
-static enum XMLParseResult str_search(struct XMLPosition *pos, const char *search_str, char *buf, size_t buf_size)
-{
-    char *ptr = buf;
-    size_t n = 0;
-
-    while (1) {
-
-        // for some reason, buf stops filling up after 138 chars
-        if (n >= buf_size) {
-            ERROR("String search failed, max bufsize reached: %ld\n", n);
-            return XML_PARSE_BUFFER_OVERFLOW;
-        }
-
-        *ptr++ = *(pos->c);
-        n++;
-        if (strstr(buf, search_str) != NULL) {
-            *ptr = '\0';
-            return XML_PARSE_SUCCESS;
-        }
-
-        if (pos_next(pos) < 0)
-            return XML_PARSE_END_OF_DATA;
-    }
-    return XML_PARSE_END_OF_DATA;
-}
-
-static void print_spaces(int n)
-{
-    for (int i=0 ; i<n ; i++)
-        printf(" ");
-}
 
 void xml_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *user_data)
 {
+    /* Callback can be used, instead of custom callback, to display full xml data */
     const int spaces = 2;
 
     struct XMLItem *xi = xml_stack_get_from_end(xml, 0);
@@ -306,14 +373,11 @@ void xml_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *user_data)
             print_spaces(spaces * xml->stack_pos);
             INFO("HEADER:   %s\n", xi->data);
             break;
+        case XML_EV_COMMENT:
+            print_spaces(spaces * xml->stack_pos);
+            INFO("COMMENT:  %s\n", xi->data);
+            break;
     }
-
-    //INFO("EVENT: %d = >>%s<<\n", ev, xi->data);
-}
-
-static int str_starts_with(const char *str, const char *substr)
-{
-    return strncmp(substr, str, strlen(substr)) == 0;
 }
 
 static int stack_last_is_tag(struct XML *xml)
@@ -362,39 +426,70 @@ static enum XMLParseResult xml_parse_header(struct XML *xml, struct XMLPosition 
     stack_put(xml, xi);
     xml->handle_data_cb(xml, XML_EV_HEADER, xml->user_data);
     stack_pop(xml);
-
-    if (pos_next(pos) < 0)
-        return XML_PARSE_SUCCESS_END_OF_DATA;
-
+    pos_next(pos);
     return XML_PARSE_SUCCESS;
 }
 
-static enum XMLParseResult xml_parse_cdata(struct XML *xml, struct XMLPosition *pos, struct XMLPosition *bak, char *buf)
+static void xml_set_skip_string(struct XML *xml, const char *str)
 {
-    buf[0] = '\0';
+    DEBUG("Setting skip string: %s\n", str);
+    strncpy(xml->skip_until, str, XML_MAX_SKIP_STR);
+}
+
+static enum XMLParseResult xml_parse_cdata(struct XML *xml, struct XMLPosition *pos, struct XMLPosition *bak)
+{
+    //buf[0] = '\0';
+    char buf[XML_MAX_PARSE_BUFFER] = "";
 
     // restore (rewind) postition cause we want to search from start of CDATA
     *pos = pos_copy(bak);
-    enum XMLParseResult res;
+    enum XMLSearchResult res;
 
-    if ((res = str_search(pos, XML_CHAR_CDATA_END, buf, XML_MAX_PARSE_BUFFER)) == XML_PARSE_SUCCESS) {
+    if ((res = str_search(pos, XML_CHAR_CDATA_END, buf, XML_MAX_PARSE_BUFFER)) == XML_SEARCH_SUCCESS) {
         buf[strlen(buf)-strlen(XML_CHAR_CDATA_END)] = '\0';
         struct XMLItem xi = xml_item_init(XML_DTYPE_STRING, buf+strlen(XML_CHAR_CDATA_START));
         stack_put(xml, xi);
         xml->handle_data_cb(xml, XML_EV_STRING, xml->user_data);
         stack_pop(xml);
-
-        if (pos_next(pos) < 0)
-            return XML_PARSE_SUCCESS_END_OF_DATA;
-
+        pos_next(pos);
         return XML_PARSE_SUCCESS;
     }
     //ERROR("[%d] Failed to find CDATA end, %s\n", res, buf);
 
-    if (res == XML_PARSE_END_OF_DATA)
-        strncpy(xml->skip_until, XML_CHAR_CDATA_END, XML_MAX_SKIP_STR);
+    if (res == XML_SEARCH_END_OF_DATA) {
+        DEBUG("CDATA: Setting skip string\n");
+        xml_set_skip_string(xml, XML_CHAR_CDATA_END);
+        return XML_PARSE_INCOMPLETE;
+    }
+    return XML_PARSE_ERROR;
+}
 
-    return res;
+static enum XMLParseResult xml_parse_comment(struct XML *xml, struct XMLPosition *pos, struct XMLPosition *bak)
+{
+    //buf[0] = '\0';
+    char buf[XML_MAX_PARSE_BUFFER] = "";
+
+    // restore (rewind) postition cause we want to search from start of CDATA
+    *pos = pos_copy(bak);
+    enum XMLSearchResult res;
+
+    if ((res = str_search(pos, XML_CHAR_COMMENT_END, buf, XML_MAX_PARSE_BUFFER)) == XML_SEARCH_SUCCESS) {
+        buf[strlen(buf)-strlen(XML_CHAR_COMMENT_END)] = '\0';
+        struct XMLItem xi = xml_item_init(XML_DTYPE_COMMENT, buf+strlen(XML_CHAR_COMMENT_START));
+        stack_put(xml, xi);
+        xml->handle_data_cb(xml, XML_EV_COMMENT, xml->user_data);
+        stack_pop(xml);
+        pos_next(pos);
+        return XML_PARSE_SUCCESS;
+    }
+    //ERROR("[%d] Failed to find CDATA end, %s\n", res, buf);
+
+    if (res == XML_SEARCH_END_OF_DATA) {
+        DEBUG("CDATA: Setting skip string\n");
+        xml_set_skip_string(xml, XML_CHAR_CDATA_END);
+        return XML_PARSE_INCOMPLETE;
+    }
+    return XML_PARSE_ERROR;
 }
 
 static enum XMLParseResult xml_parse_tag_end(struct XML *xml, struct XMLPosition *pos, char *buf)
@@ -407,40 +502,35 @@ static enum XMLParseResult xml_parse_tag_end(struct XML *xml, struct XMLPosition
             xml->handle_data_cb(xml, XML_EV_TAG_END, xml->user_data);
             stack_pop(xml);
             stack_pop(xml);
-
-            if (pos_next(pos) < 0)
-                return XML_PARSE_SUCCESS_END_OF_DATA;
-
+            pos_next(pos);
             return XML_PARSE_SUCCESS;
         }
     }
     ERROR("Unexpected closing tag found, cur=%s prev=%s\n", buf+1, xi_prev->data);
-    return XML_PARSE_UNEXPECTED;
+    return XML_PARSE_ERROR;
 }
 
 static enum XMLParseResult xml_parse_tag_start(struct XML *xml, struct XMLPosition *pos, char *buf)
 {
-        char *param;
-        struct XMLItem xi;
+    char *param;
+    struct XMLItem xi;
 
-        if (buf[strlen(buf)-1] == '/') {
-            str_split_at_char(buf, ' ', &param);
-            xi = xml_item_init(XML_DTYPE_TAG, buf);
-            xi.param = param;
-            stack_put(xml, xi);
-            xml->handle_data_cb(xml, XML_EV_TAG_START, xml->user_data);
-            stack_pop(xml);
-        }
-        else {
-            str_split_at_char(buf, ' ', &param);
-            xi = xml_item_init(XML_DTYPE_TAG, buf);
-            xi.param = param;
-            stack_put(xml, xi);
-            xml->handle_data_cb(xml, XML_EV_TAG_START, xml->user_data);
-        }
-        if (pos_next(pos) < 0)
-            return XML_PARSE_SUCCESS_END_OF_DATA;
-
+    if (buf[strlen(buf)-1] == '/') {
+        str_split_at_char(buf, ' ', &param);
+        xi = xml_item_init(XML_DTYPE_TAG, buf);
+        xi.param = param;
+        stack_put(xml, xi);
+        xml->handle_data_cb(xml, XML_EV_TAG_START, xml->user_data);
+        stack_pop(xml);
+    }
+    else {
+        str_split_at_char(buf, ' ', &param);
+        xi = xml_item_init(XML_DTYPE_TAG, buf);
+        xi.param = param;
+        stack_put(xml, xi);
+        xml->handle_data_cb(xml, XML_EV_TAG_START, xml->user_data);
+    }
+    pos_next(pos);
     return XML_PARSE_SUCCESS;
 }
 
@@ -448,15 +538,18 @@ static enum XMLParseResult xml_parse_string(struct XML *xml, struct XMLPosition 
 {
         char buf[XML_MAX_PARSE_BUFFER] = "";
 
-        enum XMLParseResult res = fforward_skip_escaped(pos, "<", NULL, NULL, "\r\n", buf, XML_MAX_PARSE_BUFFER);
+        enum XMLSearchResult res = fforward_skip_escaped(pos, "<", NULL, NULL, "\r\n", buf, XML_MAX_PARSE_BUFFER);
 
         // This also errors if there is no more data at all. In this case it is not an error
-        if ( res < XML_PARSE_SUCCESS) {
+        if ( res < XML_SEARCH_SUCCESS) {
 
-            if (res == XML_PARSE_END_OF_DATA)
-                strncpy(xml->skip_until, "<", XML_MAX_SKIP_STR);
+            if (res == XML_SEARCH_END_OF_DATA) {
+                DEBUG("Failed to find end of string\n");
+                xml_set_skip_string(xml, "<");
+                return XML_PARSE_INCOMPLETE;
+            }
 
-            return res;
+            return XML_PARSE_ERROR;
         }
 
         char *ptr = remove_leading_chars(buf, " \n\t");
@@ -480,20 +573,37 @@ static enum XMLParseResult parse_tag(struct XML *xml, struct XMLPosition *pos)
     // backup postition so we can rewind later
     struct XMLPosition bak = pos_copy(pos);
 
-    enum XMLParseResult res;
-    if ((res = fforward_skip_escaped(pos, ">", NULL, NULL, "\n", buf, XML_MAX_PARSE_BUFFER)) < XML_PARSE_SUCCESS) {
-        //DEBUG("Failed to find closing character in tag\n");
-        if (res == XML_PARSE_END_OF_DATA)
-            strncpy(xml->skip_until, ">", XML_MAX_SKIP_STR);
+    enum XMLSearchResult res;
+    if ((res = fforward_skip_escaped(pos, ">", NULL, NULL, "\n", buf, XML_MAX_PARSE_BUFFER)) < XML_SEARCH_SUCCESS) {
+
+        if (res == XML_SEARCH_END_OF_DATA) {
+
+            if (str_starts_with(buf, XML_CHAR_COMMENT_START)) {
+                DEBUG("Failed to find end of comment\n");
+                xml_set_skip_string(xml, XML_CHAR_COMMENT_END);
+            }
+            else if (str_starts_with(buf, XML_CHAR_CDATA_START)) {
+                DEBUG("Failed to find end of cdata\n");
+                xml_set_skip_string(xml, XML_CHAR_CDATA_END);
+            }
+            else {
+                DEBUG("Failed to find end of tag\n");
+                xml_set_skip_string(xml, ">");
+            }
+            //DEBUG("data: %s\n", buf);
+        }
 
         return XML_PARSE_INCOMPLETE;
     }
 
-    if (str_starts_with(buf, XML_CHAR_HEADER_START))
+    if (str_starts_with(buf, XML_CHAR_COMMENT_START))
+        return xml_parse_comment(xml, pos, &bak);
+
+    else if (str_starts_with(buf, XML_CHAR_HEADER_START))
         return xml_parse_header(xml, pos, buf);
     
     else if (str_starts_with(buf, XML_CHAR_CDATA_START))
-        return xml_parse_cdata(xml, pos, &bak, buf);
+        return xml_parse_cdata(xml, pos, &bak);
 
     else if (strlen(buf) > 0 && *buf == '/')
         return xml_parse_tag_end(xml, pos, buf);
@@ -507,23 +617,33 @@ size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks)
     int nread = 0;
     struct XMLPosition pos = pos_init(chunks, nchunks);
 
-    if (xml->zero_rd_cnt >= 1) {
+    if (xml->zero_rd_cnt >= pos.max_chunks-1) {
         ASSERTF(strlen(xml->skip_until) > 0, "zero_rd_cnt reached treshold but skip_until string is empty\n");
         DEBUG("[%d] Skip to: >%s<\n", xml->zero_rd_cnt, xml->skip_until);
-        char buf[XML_MAX_PARSE_BUFFER] = "";
 
-        enum XMLParseResult res = str_search(&pos, xml->skip_until, buf, XML_MAX_PARSE_BUFFER);
-        if (res != XML_PARSE_SUCCESS) {
-            ERROR("Skip until not found\n");
-            xml->zero_rd_cnt++;
-            return XML_MAX_PARSE_BUFFER;
-        }
-        else {
-            INFO("Found end\n");
+        enum XMLSearchResult res = str_search_no_buf(&pos, xml->skip_until);
+        if (res == XML_SEARCH_SUCCESS) {
+            INFO("Found: >%s<\n", xml->skip_until);
+            //INFO("next data: %s\n", pos.c);
+
+            if (strcmp(xml->skip_until, "<") != 0)
+                pos_next(&pos);
+
             xml->skip_until[0] = '\0';
             xml->zero_rd_cnt = 0;
+            nread = pos.npos;
+            //return pos.npos;
         }
+        else {
+            DEBUG("Not found: %s\n", xml->skip_until);
+            xml->zero_rd_cnt++;
+            return pos.npos;
+        }
+
     }
+    // TODO if buffer is full, don't wait till next run, immediately skip to end char
+    //      without using buffer, this way we don't have to deal with smol buffers
+    //
     // if parse result is incomplete, we should just stop saving chars and just skip to the known end.
     // in case of CDATA that would be  "]]"
     // in case of STRING that would be '<' or End of data
@@ -533,24 +653,14 @@ size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks)
 
         if (*pos.c == '<') {
             enum XMLParseResult tag_res = parse_tag(xml, &pos);
-            if (tag_res == XML_PARSE_INCOMPLETE) {
-                break;
-            }
-            else if (tag_res == XML_PARSE_SUCCESS_END_OF_DATA) {
+
+            if (tag_res == XML_PARSE_SUCCESS) {
                 nread = pos.npos;
+                if (!pos_has_data(&pos))
+                    break;
+            }
+            else if (tag_res == XML_PARSE_INCOMPLETE) {
                 break;
-            }
-            else if (tag_res == XML_PARSE_SUCCESS) {
-                nread = pos.npos;
-                continue;
-            }
-            else if (tag_res == XML_PARSE_END_OF_DATA) {
-                break;
-            }
-            else if (tag_res == XML_PARSE_BUFFER_OVERFLOW) {
-                ERROR("Failed to parse TAG due to smoll parse buffer\n");
-                //break;
-                return -1;
             }
             else {
                 print_parse_error(xml, &pos, "Failed to parse tag\n");
@@ -560,35 +670,20 @@ size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks)
         else {
             enum XMLParseResult str_res = xml_parse_string(xml, &pos);
             //DEBUG("res = %d\n", str_res);
-            if (str_res == XML_PARSE_SUCCESS)
+            
+            if (str_res == XML_PARSE_SUCCESS) {
                 nread = pos.npos;
-            else if (str_res == XML_PARSE_SUCCESS_END_OF_DATA) {
-                nread = pos.npos;
-                break;
+                if (!pos_has_data(&pos))
+                    break;
             }
             else if (str_res == XML_PARSE_INCOMPLETE) {
                 break;
             }
-            else if (str_res == XML_PARSE_END_OF_DATA) {
-                break;
-            }
-            else if (str_res == XML_PARSE_BUFFER_OVERFLOW) {
-                ERROR("Failed to parse STRING due to smoll parse buffer\n");
-                //break;
-                return -1;
-            }
             else {
-                DEBUG("res = %d\n", str_res);
                 print_parse_error(xml, &pos, "Failed to parse string\n");
                 return -1;
             }
-
         }
-
-
-        //if (pos_next(&pos) < 0)
-        //    break;
-
     }
     if (nread == 0) {
         xml->zero_rd_cnt++;
@@ -598,5 +693,6 @@ size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks)
         xml->zero_rd_cnt = 0;
     }
         
+    DEBUG("read %d bytes\n", nread);
     return nread;
 }

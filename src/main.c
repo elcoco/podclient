@@ -10,6 +10,7 @@
 #include "podcast.h"
 #include "lib/json/json.h"
 #include "lib/xml/xml.h"
+#include "lib/potato_parser/potato_parser.h"
 
 #define SUCCESS 0
 
@@ -18,6 +19,7 @@ struct State {
     char server[API_CLIENT_MAX_SERVER];
     char user[API_CLIENT_MAX_USER];
     char key[API_CLIENT_MAX_KEY];
+    char podcast[API_CLIENT_MAX_PODCAST];
     int  port;
 };
 
@@ -27,6 +29,7 @@ static struct State state_init()
     s.server[0] = '\0';
     s.user[0] = '\0';
     s.key[0] = '\0';
+    s.podcast[0] = '\0';
     s.port = 80;
     return s;
 }
@@ -38,6 +41,7 @@ static void show_help(struct State *s)
     printf("  -p    port,   default=%d\n", s->port);
     printf("  -u    user\n");
     printf("  -k    key\n");
+    printf("  -P    podcast url\n");
 }
 
 static int atoi_err(char *str, int *buf)
@@ -55,7 +59,7 @@ static int parse_args(struct State *s, int argc, char **argv)
     int option;
     DEBUG("Parsing args\n");
 
-    while((option = getopt(argc, argv, "s:p:u:k:h")) != -1) {
+    while((option = getopt(argc, argv, "s:p:P:u:k:h")) != -1) {
         switch (option) {
             case 's':
                 strncpy(s->server, optarg, sizeof(s->server));
@@ -65,6 +69,9 @@ static int parse_args(struct State *s, int argc, char **argv)
                     ERROR("Port is not a number: %s\n", optarg);
                     return -1;
                 }
+                break;
+            case 'P':
+                strncpy(s->podcast, optarg, sizeof(s->podcast));
                 break;
             case 'u':
                 strncpy(s->user, optarg, sizeof(s->user));
@@ -207,13 +214,67 @@ static void test_xml()
     fclose(fp);
 }
 
+static void test_pp_xml()
+{
+    // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
+    const char *path = "data/test.xml";
+    const int nchunks = 1000;
+    FILE *fp;
+    size_t n;
+    struct PP pp;
+    char chunk[nchunks+1];
+    char chunk_unread[nchunks+1];
+    chunk[0] = '\0';
+    chunk_unread[0] = '\0';
+    char *chunks[2];
+
+    pp = pp_xml_init(pp_handle_data_cb);
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        DEBUG("no such file, %s\n", path);
+        return;
+    }
+
+    while (!feof(fp)) {
+
+        n = fread(chunk, 1, nchunks, fp);
+
+        chunk[n] = '\0';
+
+        if (strlen(chunk_unread) > 0) {
+            chunks[0] = chunk_unread;
+            chunks[1] = chunk;
+        }
+        else {
+            chunks[0] = chunk;
+            chunks[1] = NULL;
+        }
+
+        int nread = pp_parse(&pp, chunks, sizeof(chunks)/sizeof(*chunks));
+        if (nread < 0) {
+            DEBUG("JSON returns 0 read chars\n");
+            break;
+        }
+
+        if (nread < nchunks && nread != 0)
+            strcpy(chunk_unread, chunk+nread);
+        else
+            chunk_unread[0] = '\0';
+    
+    }
+    INFO("CUR SIZE: json:%ld \n", sizeof(pp));
+
+    fclose(fp);
+}
+
 int main(int argc, char **argv)
 {
     //test_json();
     //return 0;
     //
-    //test_xml();
-    //return 0;
+    test_pp_xml();
+    return 0;
     
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {
@@ -228,17 +289,25 @@ int main(int argc, char **argv)
     client.port = s.port;
     client.timeout = 5L;
 
-    struct Podcast pods[API_CLIENT_MAX_SUBSCRIPTIONS];
-
-    size_t pods_found = 0;
-
-    //ac_get_actions(&client, -1);
-    ac_get_subscriptions(&client, pods, API_CLIENT_MAX_SUBSCRIPTIONS, &pods_found);
-
-    for (int i=0 ; i<pods_found ; i++) {
-        printf("\n** Parsing: %s\n", pods[i].url);
-        int episodes_found = 0;
-        get_episodes(&client, &pods[i], &episodes_found);
+    if (strlen(s.podcast) > 0) {
+        struct Podcast pod;
+        strcpy(pod.url, s.podcast);
+        printf("\n** %s\n", pod.url);
+        get_episodes(&client, &pod);
     }
+    else {
+
+        struct Podcast pods[API_CLIENT_MAX_SUBSCRIPTIONS];
+        size_t pods_found = 0;
+
+        //ac_get_actions(&client, -1);
+        ac_get_subscriptions(&client, pods, API_CLIENT_MAX_SUBSCRIPTIONS, &pods_found);
+
+        for (int i=0 ; i<pods_found ; i++) {
+            printf("\n** %s\n", pods[i].url);
+            get_episodes(&client, &pods[i]);
+        }
+    }
+    return 1;
 
 }

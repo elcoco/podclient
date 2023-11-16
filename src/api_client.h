@@ -26,6 +26,7 @@
 #define API_CLIENT_MAX_KEY    64
 #define API_CLIENT_MAX_RDATA  17 * 1024
 #define API_CLIENT_MAX_SUBSCRIPTIONS 64
+#define API_CLIENT_MAX_PODCAST 256
 
 #define API_CLIENT_URL_FMT    "%s/index.php/apps/gpoddersync/%s"
 #define API_CLIENT_SUBSCRIPTIONS "subscriptions"
@@ -97,7 +98,7 @@ struct APIUserData {
 
 enum APIClientReqResult ac_get_subscriptions(struct APIClient *client, struct Podcast *pods, size_t pods_length, size_t *pods_found);
 enum APIClientReqResult ac_get_actions(struct APIClient *client, time_t since);
-enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *pod, int *episodes_found);
+enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *pod);
 
 
 #endif
