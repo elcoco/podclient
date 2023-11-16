@@ -59,6 +59,8 @@
 
 #define PP_MAX_SEARCH_IGNORE_CHARS 10
 
+#define PP_BUFFER_OVERFLOW_PLACEHOLDER "BUFFER_OVERFLOW!!!"
+
 // How many chars to look behind/ahead the error in the parse string when displaying
 // the error message.
 #define PP_ERR_CHARS_CONTEXT 50
@@ -105,8 +107,8 @@ enum PPParseResult {
 };
 
 enum PPParseMethod {
-    PP_PARSE_METHOD_GREEDY,
-    PP_PARSE_METHOD_NON_GREEDY
+    PP_PARSE_METHOD_NON_GREEDY,
+    PP_PARSE_METHOD_GREEDY
 };
 
 struct PPPosition {
@@ -163,7 +165,8 @@ struct PP {
     void *user_data;
 
     int max_entries;
-    char skip_str[PP_MAX_SKIP_STR];
+    struct PPParserEntry skip;
+    //char skip_str[PP_MAX_SKIP_STR];
     int zero_rd_cnt;
 };
 

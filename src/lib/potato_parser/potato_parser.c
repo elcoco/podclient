@@ -72,27 +72,31 @@ void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
         case PP_DTYPE_TAG_OPEN:
             pp_print_spaces(spaces * pp->stack.pos);
             if (xi->param != NULL) {
-                INFO("TAG_START: %s, param: %s\n", xi->data, xi->param);
+                INFO("TAG_OPEN: %s, param: %s\n", xi->data, xi->param);
             }
             else {
-                INFO("TAG_START: %s\n", xi->data);
+                INFO("TAG_OPEN: %s\n", xi->data);
             }
             break;
         case PP_DTYPE_TAG_CLOSE:
             pp_print_spaces(spaces * pp->stack.pos - spaces);
-            INFO("TAG_END:   %s\n", xi->data);
+            INFO("TAG_CLOSE: %s\n", xi->data);
             break;
         case PP_DTYPE_STRING:
             pp_print_spaces(spaces * pp->stack.pos);
-            INFO("STRING:   %s\n", xi->data);
+            INFO("STRING: %s\n", xi->data);
+            break;
+        case PP_DTYPE_CDATA:
+            pp_print_spaces(spaces * pp->stack.pos);
+            INFO("CDATA: %s\n", xi->data);
             break;
         case PP_DTYPE_HEADER:
             pp_print_spaces(spaces * pp->stack.pos);
-            INFO("HEADER:   %s\n", xi->data);
+            INFO("HEADER: %s\n", xi->data);
             break;
         case PP_DTYPE_COMMENT:
             pp_print_spaces(spaces * pp->stack.pos);
-            INFO("COMMENT:  %s\n", xi->data);
+            INFO("COMMENT: %s\n", xi->data);
             break;
     }
 }
@@ -123,11 +127,12 @@ void xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, struct PPItem *ite
     // TODO: check if tag ends with />, if so, remove from stack
     pp_stack_put(&(pp->stack), *item);
     pp->handle_data_cb(pp, item->dtype, pp->user_data);
-    if (str_ends_with(item->data, PP_CHAR_TAG_SIGNLE_LINE_CLOSE_END)) {
+    if (str_ends_with(item->data, "/")) {
         pp_stack_pop(&(pp->stack));
     }
     return;
 }
+
 static void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm)
 {
     assert(pp->max_entries+1 <= PP_MAX_PARSER_ENTRIES); // entries max reached!
@@ -141,17 +146,17 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     pp_stack_init(&(pp.stack));
 
     pp.max_entries = 0;
-    pp.skip_str[0] = '\0';
+    //pp.skip_str[0] = '\0';
     pp.zero_rd_cnt = 0;
     pp.user_data = NULL;
     pp.handle_data_cb = data_cb;
 
-    pp_add_parse_entry(&pp, PP_CHAR_COMMENT_START,   PP_CHAR_COMMENT_END,   PP_DTYPE_COMMENT,   NULL,     PP_PARSE_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_CHAR_CDATA_START,     PP_CHAR_CDATA_END,     PP_DTYPE_CDATA,     NULL,     PP_PARSE_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_CHAR_HEADER_START,    PP_CHAR_HEADER_END,    PP_DTYPE_HEADER,    NULL,     PP_PARSE_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_CHAR_TAG_CLOSE_START, PP_CHAR_TAG_CLOSE_END, PP_DTYPE_TAG_CLOSE,  xml_tag_close_cb,     PP_PARSE_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_CHAR_TAG_OPEN_START,  PP_CHAR_TAG_OPEN_END,  PP_DTYPE_TAG_OPEN,  xml_tag_open_cb,     PP_PARSE_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, "",                    "<",                     PP_DTYPE_STRING,    NULL,     PP_PARSE_METHOD_NON_GREEDY);
+    pp_add_parse_entry(&pp, PP_CHAR_COMMENT_START,   PP_CHAR_COMMENT_END,               PP_DTYPE_COMMENT,   NULL,             PP_PARSE_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_CHAR_CDATA_START,     PP_CHAR_CDATA_END,                 PP_DTYPE_CDATA,     NULL,             PP_PARSE_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_CHAR_HEADER_START,    PP_CHAR_HEADER_END,                PP_DTYPE_HEADER,    NULL,             PP_PARSE_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_CHAR_TAG_CLOSE_START, PP_CHAR_TAG_CLOSE_END,             PP_DTYPE_TAG_CLOSE, xml_tag_close_cb, PP_PARSE_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_CHAR_TAG_OPEN_START,  PP_CHAR_TAG_OPEN_END,              PP_DTYPE_TAG_OPEN,  xml_tag_open_cb,  PP_PARSE_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, "",                    "<",                                 PP_DTYPE_STRING,    NULL,             PP_PARSE_METHOD_NON_GREEDY);
 
     return pp;
 }
@@ -270,7 +275,8 @@ static int pp_str_contains_char(const char *str, const char *chars)
 static enum PPSearchResult pp_str_search_no_buf(struct PPPosition *pos, const char *search_str, const char *ignore_chars, char *save_buf, int save_buf_size)
 {
     /* Search for substring in string.
-     * If another char is found that is not op ignore_string, exit with error */
+     * If another char is found that is not op ignore_string, exit with error
+     * if ignore_chars == NULL, allow all chars */
     char buf[PP_MAX_SEARCH_BUF] = "";
     char *ptr = buf;
 
@@ -347,6 +353,19 @@ static char* pp_str_rm_leading(char *str, const char *chars)
     return str;
 }
 
+static char* remove_leading_chars(char *buf, const char *chars)
+{
+    char *ptr = buf;
+    for (int i=0 ; i<strlen(buf) ; i++) {
+
+            if (strchr(chars, *ptr))
+                ptr++;
+            else
+                break;
+    }
+    return ptr;
+}
+
 static void pp_print_parse_error(struct PP *pp, const char *msg)
 {
     if (msg != NULL)
@@ -394,6 +413,20 @@ static struct PPItem pp_item_init(enum PPDtype dtype, char *data)
     return item;
 }
 
+int pp_item_sanitize(struct PPItem *item, struct PPParserEntry *pe)
+{
+    /* Sanitize, clear tag chars etc from item data */
+    // remove leading chars
+    char *lptr = item->data;
+    char *rptr = item->data+(strlen(pe->start));
+    while (*rptr != '\0')
+        *lptr++ = *rptr++;
+    *lptr = '\0';
+
+    // remove trailing chars
+    item->data[strlen(item->data) - strlen(pe->end)] = '\0';
+    return 0;
+}
 
 enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, struct PPParserEntry *pe)
 {
@@ -411,14 +444,20 @@ enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, str
     char parse_buf[PP_MAX_PARSE_BUFFER] = "";
     enum PPSearchResult res_end = pp_str_search_no_buf(&(pp->pos), pe->end, NULL, parse_buf, PP_MAX_PARSE_BUFFER);
 
-    if (res_end == PP_SEARCH_END_OF_DATA)
+    if (res_end == PP_SEARCH_END_OF_DATA) {
+        pp->skip = *pe;
         return PP_PARSE_INCOMPLETE;
-    else if (res_end == PP_SEARCH_SYNTAX_ERROR)
+    }
+    else if (res_end == PP_SEARCH_SYNTAX_ERROR) {
         return PP_PARSE_ERROR;
+    }
 
-    pp_str_rm_leading(parse_buf, " \n\t");
+    char *sanitised = remove_leading_chars(parse_buf, " \n\t");
 
-    struct PPItem item = pp_item_init(pe->dtype, parse_buf);
+    struct PPItem item = pp_item_init(pe->dtype, sanitised);
+
+    pp_item_sanitize(&item, pe);
+
     if (pe->cb != NULL) {
         pe->cb(pp, pe, &item);
     }
@@ -428,10 +467,6 @@ enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, str
         pp_stack_pop(&(pp->stack));
     }
 
-
-    //DEBUG("Found end string: %s\n", pe->end);
-    //DEBUG("buf: >%s<\n", parse_buf);
-
     if (pe->greedy == PP_PARSE_METHOD_GREEDY)
         pp_pos_next(&(pp->pos));
 
@@ -440,13 +475,48 @@ enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, str
 
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 {
+    // TODO: when tag ends on same line, trailing slash is still there
+    // DONE: In case of buffer overflow, item should have a placeholder
+    // TODO: Seperate XML specific stuff into it's own header file (subclass)
+    // TODO: Add some integrity checking stuff
+    // TODO: Create JSON version
+    // TODO: Sererate parameters in XML version
     pp->pos = pp_pos_init(chunks, nchunks);
     size_t nread = 0;
 
-
-    //DEBUG("Starting parse\n");
-    //pp_print_chunks(&(pp->pos));
     int passc = 0;
+
+
+    if (pp->zero_rd_cnt >= pp->pos.max_chunks-1) {
+        DEBUG("[%d] Skip to: >%s<\n", pp->zero_rd_cnt, pp->skip.end);
+
+        enum PPSearchResult res = pp_str_search_no_buf(&(pp->pos), pp->skip.end, NULL, NULL, -1);
+        if (res == PP_SEARCH_SUCCESS) {
+            //INFO("Found: >%s<\n", pp->skip.end);
+
+            // add a placeholder item that represents the item with missing data due to buffer overflow
+            struct PPItem item = pp_item_init(pp->skip.dtype, PP_BUFFER_OVERFLOW_PLACEHOLDER);
+
+            if (pp->skip.cb != NULL) {
+                pp->skip.cb(pp, &(pp->skip), &item);
+            }
+            else {
+                pp_stack_put(&(pp->stack), item);
+                pp->handle_data_cb(pp, item.dtype, pp->user_data);
+                pp_stack_pop(&(pp->stack));
+            }
+
+            if (pp->skip.greedy == PP_PARSE_METHOD_GREEDY)
+                pp_pos_next(&(pp->pos));
+
+            pp->zero_rd_cnt = 0;
+            nread = pp->pos.npos;
+        }
+        else {
+            pp->zero_rd_cnt++;
+            return pp->pos.npos;
+        }
+    }
 
     while (1) {
         struct PPPosition pos_cpy = pp_pos_copy(&(pp->pos));
@@ -455,6 +525,10 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
         for (int i=0 ; i<pp->max_entries ; i++, pe++) {
             enum  PPParseResult res;
             if ((res = pp_parse_entry(pp, &pos_cpy, pe)) == PP_PARSE_INCOMPLETE) {
+                if (nread == 0)
+                    pp->zero_rd_cnt++;
+                else if (nread > 0)
+                    pp->zero_rd_cnt = 0;
                 return nread;
             }
             else if (res == PP_PARSE_SUCCESS) {
@@ -472,6 +546,4 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
         }
 
     }
-    DEBUG("END\n");
-    return nread;
 }
