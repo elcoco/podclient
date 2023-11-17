@@ -26,28 +26,8 @@
 // And can be cropped depending on XML_MAX_DATA.
 #define PP_MAX_PARSE_BUFFER 1 * 1024
 
-
-#define PP_MAX_ATTR_KEY       256
-#define PP_MAX_ATTR_VALUE     256
 #define PP_MAX_SKIP_STR         8
 #define PP_MAX_PARSER_ENTRIES  32
-
-#define PP_CHAR_LESS_THAN      "&lt"
-#define PP_CHAR_GREATER_THAN   "&gt"
-#define PP_CHAR_AMPERSAND      "&amp"
-#define PP_CHAR_APASTROPHE     "&apos"
-#define PP_CHAR_QUOTE          "&quot"
-#define PP_CHAR_COMMENT_START  "<!--"
-#define PP_CHAR_COMMENT_END    "-->"
-#define PP_CHAR_CDATA_START    "<![CDATA["
-#define PP_CHAR_CDATA_END      "]]>"
-#define PP_CHAR_HEADER_START   "<?xml"
-#define PP_CHAR_HEADER_END     "?>"
-#define PP_CHAR_TAG_OPEN_START  "<"
-#define PP_CHAR_TAG_OPEN_END    ">"
-#define PP_CHAR_TAG_CLOSE_START "</"
-#define PP_CHAR_TAG_CLOSE_END   ">"
-#define PP_CHAR_TAG_SIGNLE_LINE_CLOSE_END   "/>"
 
 // don't save these chars when looking for strings
 #define PP_STR_SEARCH_IGNORE_CHARS "\t\n"
@@ -126,17 +106,6 @@ struct PPItem {
     char *param;
 };
 
-// the stuff in the opening tag eg: <book category="bla">
-struct PPAttr {
-    char key[PP_MAX_ATTR_KEY];
-    char value[PP_MAX_ATTR_VALUE];
-};
-
-enum  PPParserEvent {
-    PP_PARSER_EVENT_START,
-    PP_PARSER_EVENT_END
-};
-
 struct PPStack {
     struct PPItem stack[PP_MAX_STACK];
     int pos;
@@ -151,7 +120,7 @@ struct PPParserEntry {
     enum PPDtype dtype;
 
     // callback handles sanity check, and adding/removing from stack
-    void(*cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
+    enum PPParseResult(*cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
 
     enum PPParseMethod greedy;
 };
@@ -165,19 +134,36 @@ struct PP {
     void *user_data;
 
     int max_entries;
+
+    // When a bufferoverflow occurs, instead of creating a larger buffer we save the entry
+    // that defines to which string we should skip.
+    // Then keep on looking for this string and add a placeholder PPItem to the stack
+    // It is a potato parser after all ;)
     struct PPParserEntry skip;
-    //char skip_str[PP_MAX_SKIP_STR];
+    // How many times we returned zero chars parsed, this indicates wether we should look for the above skip PPParserEntry
     int zero_rd_cnt;
 };
 
-typedef void(*entry_cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
+typedef enum PPParseResult(*entry_cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
 typedef void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data);
 
-struct PP pp_xml_init(handle_data_cb data_cb);
-//struct PP pp_xml_init(void(*handle_data_cb)(struct PP *pp, enum PPEvent ev, void *user_data));
 void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks);
 
+void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm);
+
+
+// helpers
+int str_ends_with(const char *str, const char *substr);
+int pp_str_split_at_char(char *str, char c, char **rstr);
+void pp_print_spaces(int n);
+
+
+void pp_stack_init(struct PPStack *stack);
+int pp_stack_put(struct PPStack *stack, struct PPItem ji);
+int pp_stack_pop(struct PPStack *stack);
+void pp_stack_debug(struct PPStack *stack);
 struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset);
+
+size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks);
 
 #endif

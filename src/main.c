@@ -10,7 +10,7 @@
 #include "podcast.h"
 #include "lib/json/json.h"
 #include "lib/xml/xml.h"
-#include "lib/potato_parser/potato_parser.h"
+#include "lib/potato_parser/potato_xml.h"
 
 #define SUCCESS 0
 
@@ -174,7 +174,7 @@ static void test_xml()
     chunk_unread[0] = '\0';
     char *chunks[2];
 
-    xml = xml_init(xml_handle_data_cb);
+    xml = xml_init(pp_xml_handle_data_cb);
 
     fp = fopen(path, "r");
     if (fp == NULL) {
@@ -228,7 +228,7 @@ static void test_pp_xml()
     chunk_unread[0] = '\0';
     char *chunks[2];
 
-    pp = pp_xml_init(pp_handle_data_cb);
+    pp = pp_xml_init(pp_xml_handle_data_cb);
 
     fp = fopen(path, "r");
     if (fp == NULL) {
@@ -253,7 +253,7 @@ static void test_pp_xml()
 
         int nread = pp_parse(&pp, chunks, sizeof(chunks)/sizeof(*chunks));
         if (nread < 0) {
-            DEBUG("JSON returns 0 read chars\n");
+            DEBUG("PPXML returns 0 read chars\n");
             break;
         }
 
@@ -263,7 +263,7 @@ static void test_pp_xml()
             chunk_unread[0] = '\0';
     
     }
-    INFO("CUR SIZE: json:%ld \n", sizeof(pp));
+    INFO("CUR SIZE: xml:%ld \n", sizeof(pp));
 
     fclose(fp);
 }
