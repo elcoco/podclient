@@ -1,8 +1,4 @@
 #include "api_client.h"
-#include "lib/json/json.h"
-#include "lib/xml/xml.h"
-
-#include "podcast.h"
 
 struct JSON json;
 int bytes_read = 0;
@@ -119,7 +115,7 @@ static size_t ac_req_json_read_cb(char *ptr, size_t size, size_t nmemb, void *us
 static size_t ac_req_xml_read_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
     struct APIUserData *data = userdata;
-    struct XML *xml = data->parser;
+    struct PP *pp = data->parser;
 
     size_t chunksize = size * nmemb;
 
@@ -153,7 +149,7 @@ static size_t ac_req_xml_read_cb(char *ptr, size_t size, size_t nmemb, void *use
         chunks[1] = NULL;
     }
 
-    int nread = xml_parse(xml, chunks, sizeof(chunks)/sizeof(*chunks));
+    int nread = pp_parse(pp, chunks, sizeof(chunks)/sizeof(*chunks));
     if (nread < 0)
         return CURLE_WRITE_ERROR;
 
@@ -169,7 +165,8 @@ static size_t ac_req_xml_read_cb(char *ptr, size_t size, size_t nmemb, void *use
     else
         data->unread_chunk[0] = '\0';
 
-    //DEBUG("Bytes read: %d, total: %d\n", nread, bytes_read);
+    DEBUG("Bytes read/parsed %ld/%d Bytes\n", nmemb*size, nread);
+    DEBUG("Bytes left: %s\n", data->unread_chunk);
     return chunksize;
 }
 
@@ -256,15 +253,15 @@ static int write_to_file(char *path, const char *mode, const char *fmt, ...)
     return 0;
 }
 
-static void episodes_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *user_data)
+static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
 {
     /* Callback is passed to json lib to handle incoming data.
      * Data is saved in podcast struct */
-    struct XMLItem *xi = xml_stack_get_from_end(xml, 0);
+    struct PPItem *item = pp_stack_get_from_end(pp, 0);
     struct APIUserData *data = user_data;
     struct Episode *ep = data->data;
 
-    if (ev == XML_EV_TAG_END && strcmp(xi->data, "item") == 0) {
+    if (dtype == PP_DTYPE_TAG_CLOSE && strcmp(item->data, "item") == 0) {
         char path[256] = "";
         sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
         write_to_file(path, "a", EPISODE_JSON_FMT, ep->title, ep->guid, ep->url);
@@ -272,14 +269,14 @@ static void episodes_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *use
         ep->guid[0] = '\0';
         ep->title[0] = '\0';
     }
-    else if (ev == XML_EV_STRING) {
-        struct XMLItem *xi_tag = xml_stack_get_from_end(xml, 1);
-        struct XMLItem *xi_item = xml_stack_get_from_end(xml, 2);
-        if (xi_item != NULL && xi_item->dtype == XML_DTYPE_TAG && strcmp(xi_item->data, "channel") == 0) {
-            if (strcmp(xi_tag->data, "title") == 0) {
-                strcpy(ep->podcast->title, xi->data);
-                //DEBUG("PODCAST TITLE: %s\n", xi->data);
-                printf("   %s\n", xi->data);
+    else if (dtype == PP_DTYPE_STRING || dtype == PP_DTYPE_CDATA) {
+        struct PPItem *item_tag = pp_stack_get_from_end(pp, 1);
+        struct PPItem *item_item = pp_stack_get_from_end(pp, 2);
+        if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "channel") == 0) {
+            if (strcmp(item_tag->data, "title") == 0) {
+                strcpy(ep->podcast->title, item->data);
+                //DEBUG("PODCAST TITLE: %s\n", item->data);
+                printf("   %s\n", item->data);
 
 
                 char path[256] = "";
@@ -287,19 +284,19 @@ static void episodes_handle_data_cb(struct XML *xml, enum XMLEvent ev, void *use
                 write_to_file(path, "w", "[\n");
             }
         }
-        else if (xi_item != NULL && xi_item->dtype == XML_DTYPE_TAG && strcmp(xi_item->data, "item") == 0) {
+        else if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "item") == 0) {
 
-            if (strcmp(xi_tag->data, "title") == 0) {
-                strncpy(ep->title, xi->data, PODCAST_MAX_TITLE);
-                printf("   - %s\n", xi->data);
+            if (strcmp(item_tag->data, "title") == 0) {
+                strncpy(ep->title, item->data, PODCAST_MAX_TITLE);
+                printf("   - %s\n", item->data);
             }
-            else if (strcmp(xi_tag->data, "guid") == 0) {
-                strncpy(ep->guid, xi->data, PODCAST_MAX_GUID);
-                //DEBUG("GUID:  %s\n", xi->data);
+            else if (strcmp(item_tag->data, "guid") == 0) {
+                strncpy(ep->guid, item->data, PODCAST_MAX_GUID);
+                //DEBUG("GUID:  %s\n", item->data);
             }
-            else if (strcmp(xi_tag->data, "link") == 0) {
-                strncpy(ep->url, xi->data, PODCAST_MAX_URL);
-                //DEBUG("LINK:  %s\n", xi->data);
+            else if (strcmp(item_tag->data, "link") == 0) {
+                strncpy(ep->url, item->data, PODCAST_MAX_URL);
+                //DEBUG("LINK:  %s\n", item->data);
             }
         }
     }
@@ -354,23 +351,28 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     struct APIUserData user_data;
 
     // callback will be called on new parsed xml data
-    struct XML xml = xml_init(xml_handle_data_cb);
+    struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
     //struct XML xml = xml_init(episodes_handle_data_cb);
 
-    xml.user_data = &user_data;
+    pp.user_data = &user_data;
     struct Episode ep;
     memset(&ep, 0, sizeof(struct Episode));
     ep.podcast = pod;
 
     user_data.data = &ep;
-    user_data.parser = &xml;
+    user_data.parser = &pp;
     user_data.chunk[0] = '\0';
     user_data.unread_chunk[0] = '\0';
 
     long status_code;
 
+    enum APIClientReqResult res = ac_req_get(client, pod->url, &user_data, ac_req_xml_read_cb, &status_code);
+
+    assert(pp.stack.pos == -1);  // not all tags were parsed
+
+
     // callback will be called when curl read new data from stream
-    if (ac_req_get(client, pod->url, &user_data, ac_req_xml_read_cb, &status_code) < 0) {
+    if (res < 0) {
         ERROR("Failed to make request\n");
         return API_CLIENT_REQ_UNKNOWN_ERROR;
     }

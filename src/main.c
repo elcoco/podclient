@@ -9,7 +9,7 @@
 #include "api_client.h"
 #include "podcast.h"
 #include "lib/json/json.h"
-#include "lib/xml/xml.h"
+//#include "lib/xml/xml.h"
 #include "lib/potato_parser/potato_xml.h"
 
 #define SUCCESS 0
@@ -174,7 +174,7 @@ static void test_xml()
     chunk_unread[0] = '\0';
     char *chunks[2];
 
-    xml = xml_init(pp_xml_handle_data_cb);
+    xml = xml_init(xml_handle_data_cb);
 
     fp = fopen(path, "r");
     if (fp == NULL) {
@@ -273,8 +273,8 @@ int main(int argc, char **argv)
     //test_json();
     //return 0;
     //
-    test_pp_xml();
-    return 0;
+    //test_pp_xml();
+    //return 0;
     
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {

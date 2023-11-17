@@ -18,6 +18,10 @@
 #include "podcast.h"
 #include "lib/json/json.h"
 
+#include "lib/potato_parser/potato_xml.h"
+
+#include "podcast.h"
+
 #define API_CLIENT_BASE_DIR "test"
 #define API_CLIENT_POD_DIR  "podcasts"
 

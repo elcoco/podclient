@@ -14,29 +14,9 @@
 // TODO: add a way to differentiate between Buffer overflow and success in fforward_skip_escaped() and str_search()
 //
 
-static void string_cb(struct PP *pp, struct PPParserEntry *pe, enum PPEvent ev, void *user_data);
-
 static struct PPPosition pp_pos_init(char **chunks, size_t nchunks);
 static int pp_pos_next(struct PPPosition *pos);
 static struct PPPosition pp_pos_copy(struct PPPosition *src);
-
-static void pp_print_chunks(struct PPPosition *pos)
-{
-    struct PPPosition pos_cpy = pp_pos_copy(pos);
-    printf("\n** CHUNKS:\n");
-    int cur_chunk = -1;
-    while (1) {
-        if (cur_chunk != pos_cpy.cur_chunk) {
-            cur_chunk = pos_cpy.cur_chunk;
-            printf("**** CHUNK %d:\n", cur_chunk);
-        }
-        printf("%c", *pos_cpy.c);
-        
-        if (pp_pos_next(&pos_cpy) < 0)
-            break;
-    }
-    printf("END CHUNKS\n\n");
-}
 
 // HELPERS ////////////////////////////
 
@@ -56,7 +36,6 @@ static enum PPSearchResult pp_str_search(struct PPPosition *pos, const char *sea
     }
 
     int save_buf_i = 0;
-
 
     while (1) {
         
@@ -87,38 +66,20 @@ static enum PPSearchResult pp_str_search(struct PPPosition *pos, const char *sea
         }
 
         if (strstr(buf, search_str) != NULL)
-            return PP_SEARCH_SUCCESS;
+            return PP_SEARCH_RESULT_SUCCESS;
 
         //if (ignore_chars != NULL && !pp_str_contains_char(buf, ignore_buf))
-        //    return PP_SEARCH_SYNTAX_ERROR;
+        //    return PP_SEARCH_RESULT_RESULT_SYNTAX_ERROR;
 
         if (ignore_chars != NULL && !strchr(ignore_buf, *pos->c))
-            return PP_SEARCH_SYNTAX_ERROR;
+            return PP_SEARCH_RESULT_SYNTAX_ERROR;
 
 
         if (pp_pos_next(pos) < 0)
-            return PP_SEARCH_END_OF_DATA;
+            return PP_SEARCH_RESULT_END_OF_DATA;
 
         save_buf_i++;
     }
-}
-
-static char* pp_str_rm_leading(char *str, const char *chars)
-{
-    /* Remove, replace and lower a string */
-    char *str_ptr = str;
-
-    for (int i=0 ; i<strlen(str) ; i++, str_ptr++) {
-        if (strchr(chars, *str_ptr) != NULL) {
-            //DEBUG("Found >%c< in >%s<\n", *str_ptr, chars);
-            char *lptr = str+i;
-            char *rptr = str+i+1;
-            while (*rptr != '\0')
-                *lptr++ = *rptr++;
-            *lptr = '\0';
-        }
-    }
-    return str;
 }
 
 static char* remove_leading_chars(char *buf, const char *chars)
@@ -134,6 +95,7 @@ static char* remove_leading_chars(char *buf, const char *chars)
     return ptr;
 }
 
+/*
 static int pp_str_contains_char(const char *str, const char *chars)
 {
     for (int i=0 ; i<strlen(chars) ; i++) {
@@ -143,6 +105,25 @@ static int pp_str_contains_char(const char *str, const char *chars)
     }
     return 0;
 }
+
+static char* pp_str_rm_leading(char *str, const char *chars)
+{
+    // Remove, replace and lower a string 
+    char *str_ptr = str;
+
+    for (int i=0 ; i<strlen(str) ; i++, str_ptr++) {
+        if (strchr(chars, *str_ptr) != NULL) {
+            //DEBUG("Found >%c< in >%s<\n", *str_ptr, chars);
+            char *lptr = str+i;
+            char *rptr = str+i+1;
+            while (*rptr != '\0')
+                *lptr++ = *rptr++;
+            *lptr = '\0';
+        }
+    }
+    return str;
+}
+*/
 
 void pp_print_spaces(int n)
 {
@@ -194,13 +175,13 @@ int str_ends_with(const char *str, const char *substr)
 void pp_stack_init(struct PPStack *stack)
 {
     memset(stack, 0, sizeof(struct PPItem) * PP_MAX_STACK);
-    stack->pos = 0;
+    stack->pos = -1;
 }
 
 int pp_stack_put(struct PPStack *stack, struct PPItem ji)
 {
     ASSERTF(stack->pos <= PP_MAX_STACK -1, "Can't PUT, stack is full!\n");
-
+    ASSERTF(ji.dtype != PP_DTYPE_UNKNOWN, "item has no datatype!\n");
     (stack->pos)++;
     memcpy(&(stack->stack[stack->pos]), &ji, sizeof(struct PPItem));
     return 0;
@@ -219,42 +200,6 @@ struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset)
     if (offset > pp->stack.pos+1)
         return NULL;
     return &(pp->stack.stack[pp->stack.pos - offset]);
-}
-
-void pp_stack_debug(struct PPStack *stack)
-{
-    ERROR("STACK CONTENTS\n");
-    struct PPItem *xi = stack->stack;
-
-    for (int i=0 ; i<PP_MAX_STACK ; i++, xi++) {
-        char dtype[16] = "";
-        switch (xi->dtype) {
-            case PP_DTYPE_TAG:
-                strcpy(dtype, "TAG   ");
-                break;
-            case PP_DTYPE_HEADER:
-                strcpy(dtype, "HEADER   ");
-                break;
-            case PP_DTYPE_STRING:
-                strcpy(dtype, "STRING");
-                break;
-            case PP_DTYPE_CDATA:
-                strcpy(dtype, "CDATA");
-                break;
-            case PP_DTYPE_COMMENT:
-                strcpy(dtype, "COMMENT");
-                break;
-            case PP_DTYPE_UNKNOWN:
-                return;
-        }
-
-        if (strlen(xi->data) > 0) {
-            ERROR("%d: dtype: %s  =>  %s\n", i, dtype, xi->data);
-        }
-        else {
-            ERROR("%d: dtype: %s\n", i, dtype);
-        }
-    }
 }
 
 
@@ -303,6 +248,24 @@ static struct PPPosition pp_pos_copy(struct PPPosition *src)
     return pos_cpy;
 }
 
+static void pp_pos_print_chunks(struct PPPosition *pos)
+{
+    struct PPPosition pos_cpy = pp_pos_copy(pos);
+    printf("\n** CHUNKS:\n");
+    int cur_chunk = -1;
+    while (1) {
+        if (cur_chunk != pos_cpy.cur_chunk) {
+            cur_chunk = pos_cpy.cur_chunk;
+            printf("**** CHUNK %d:\n", cur_chunk);
+        }
+        printf("%c", *pos_cpy.c);
+        
+        if (pp_pos_next(&pos_cpy) < 0)
+            break;
+    }
+    printf("END CHUNKS\n\n");
+}
+
 
 // PARSER //////////////////////////////
 static void pp_print_parse_error(struct PP *pp, const char *msg)
@@ -345,6 +308,7 @@ static void pp_print_parse_error(struct PP *pp, const char *msg)
 
 static struct PPItem pp_item_init(enum PPDtype dtype, char *data)
 {
+    assert(dtype != PP_DTYPE_UNKNOWN); // PPItem should always have a datatype
     struct PPItem item;
     item.dtype = dtype;
     strncpy(item.data, data, PP_MAX_DATA);
@@ -383,10 +347,10 @@ void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum 
 
 enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, struct PPParserEntry *pe)
 {
-    enum PPSearchResult res_start = pp_str_search(&(pp->pos), pe->start, " \n\t", NULL, -1);
+    enum PPSearchResult res_start = pp_str_search(&(pp->pos), pe->start, " \r\n\t", NULL, -1);
 
-    if (res_start != PP_SEARCH_SUCCESS)
-        return PP_PARSE_NO_MATCH;
+    if (res_start != PP_SEARCH_RESULT_SUCCESS)
+        return PP_PARSE_RESULT_NO_MATCH;
 
     // rewind to start of found item to capture the whole thing
     pp->pos = pp_pos_copy(pos_cpy);
@@ -395,42 +359,87 @@ enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, str
     char parse_buf[PP_MAX_PARSE_BUFFER] = "";
     enum PPSearchResult res_end = pp_str_search(&(pp->pos), pe->end, NULL, parse_buf, PP_MAX_PARSE_BUFFER);
 
-    if (res_end == PP_SEARCH_END_OF_DATA) {
+    if (res_end == PP_SEARCH_RESULT_END_OF_DATA) {
         pp->skip = *pe;
-        return PP_PARSE_INCOMPLETE;
+        pp->skip_is_set = 1;
+        return PP_PARSE_RESULT_INCOMPLETE;
     }
-    else if (res_end == PP_SEARCH_SYNTAX_ERROR) {
-        return PP_PARSE_ERROR;
+    else if (res_end == PP_SEARCH_RESULT_SYNTAX_ERROR) {
+        return PP_PARSE_RESULT_ERROR;
+    }
+    else {
+        pp->skip_is_set = 0;
     }
 
-    char *sanitised = remove_leading_chars(parse_buf, " \n\t");
-
+    char *sanitised = remove_leading_chars(parse_buf, " \r\n\t");
     struct PPItem item = pp_item_init(pe->dtype, sanitised);
-
     pp_item_sanitize(&item, pe);
 
+                                             
     if (pe->cb != NULL) {
         enum PPParseResult cb_res = pe->cb(pp, pe, &item);
-        if  (cb_res < PP_PARSE_SUCCESS)
+        if  (cb_res < PP_PARSE_RESULT_SUCCESS)
             return cb_res;
     }
     else {
+        assert(item.dtype != PP_DTYPE_UNKNOWN);  // trying to use uninitialised item
         pp_stack_put(&(pp->stack), item);
         pp->handle_data_cb(pp, item.dtype, pp->user_data);
         pp_stack_pop(&(pp->stack));
+
     }
 
-    if (pe->greedy == PP_PARSE_METHOD_GREEDY)
+    if (pe->greedy == PP_METHOD_GREEDY)
         pp_pos_next(&(pp->pos));
 
-    return PP_PARSE_SUCCESS;
+    return PP_PARSE_RESULT_SUCCESS;
+}
+
+void pp_xml_stack_debug(struct PPStack *stack)
+{
+    INFO("STACK CONTENTS\n");
+    struct PPItem *xi = stack->stack;
+
+    for (int i=0 ; i<PP_MAX_STACK ; i++, xi++) {
+        char dtype[16] = "";
+        switch (xi->dtype) {
+            case PP_DTYPE_TAG_OPEN:
+                strcpy(dtype, "TAG_OPEN  ");
+                break;
+            case PP_DTYPE_TAG_CLOSE:
+                strcpy(dtype, "TAG_CLOSE ");
+                break;
+            case PP_DTYPE_HEADER:
+                strcpy(dtype, "HEADER    ");
+                break;
+            case PP_DTYPE_STRING:
+                strcpy(dtype, "STRING    ");
+                break;
+            case PP_DTYPE_CDATA:
+                strcpy(dtype, "CDATA     ");
+                break;
+            case PP_DTYPE_COMMENT:
+                strcpy(dtype, "COMMENT   ");
+                break;
+            case PP_DTYPE_UNKNOWN:
+                strcpy(dtype, "EMPTY     ");
+                break;
+        }
+
+        if (strlen(xi->data) > 0) {
+            INFO("%d: dtype: %s  =>  %s\n", i, dtype, xi->data);
+        }
+        else {
+            INFO("%d: dtype: %s\n", i, dtype);
+        }
+    }
 }
 
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 {
     // DONE: when tag ends on same line, trailing slash is still there
     // DONE: In case of buffer overflow, item should have a placeholder
-    // TODO: Seperate XML specific stuff into it's own header file (subclass)
+    // DONE: Seperate XML specific stuff into it's own header file (subclass)
     // TODO: Add some integrity checking stuff
     // TODO: Create JSON version
     // TODO: Sererate parameters in XML version
@@ -439,20 +448,20 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 
     int passc = 0;
 
-
     if (pp->zero_rd_cnt >= pp->pos.max_chunks-1) {
+        assert(pp->skip_is_set == 1);                // trying to skip to skip char but it has no intentional value
+                                                     
         DEBUG("[%d] Skip to: >%s<\n", pp->zero_rd_cnt, pp->skip.end);
 
         enum PPSearchResult res = pp_str_search(&(pp->pos), pp->skip.end, NULL, NULL, -1);
-        if (res == PP_SEARCH_SUCCESS) {
-            //INFO("Found: >%s<\n", pp->skip.end);
+        if (res == PP_SEARCH_RESULT_SUCCESS) {
 
             // add a placeholder item that represents the item with missing data due to buffer overflow
             struct PPItem item = pp_item_init(pp->skip.dtype, PP_BUFFER_OVERFLOW_PLACEHOLDER);
 
             if (pp->skip.cb != NULL) {
                 enum PPParseResult cb_res = pp->skip.cb(pp, &(pp->skip), &item);
-                if  (cb_res < PP_PARSE_SUCCESS)
+                if  (cb_res < PP_PARSE_RESULT_SUCCESS)
                     return cb_res;
             }
             else {
@@ -461,9 +470,10 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
                 pp_stack_pop(&(pp->stack));
             }
 
-            if (pp->skip.greedy == PP_PARSE_METHOD_GREEDY)
+            if (pp->skip.greedy == PP_METHOD_GREEDY)
                 pp_pos_next(&(pp->pos));
 
+            pp->skip_is_set = 0;
             pp->zero_rd_cnt = 0;
             nread = pp->pos.npos;
         }
@@ -479,27 +489,27 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 
         for (int i=0 ; i<pp->max_entries ; i++, pe++) {
             enum  PPParseResult res;
-            if ((res = pp_parse_entry(pp, &pos_cpy, pe)) == PP_PARSE_INCOMPLETE) {
+            if ((res = pp_parse_entry(pp, &pos_cpy, pe)) == PP_PARSE_RESULT_INCOMPLETE) {
                 if (nread == 0)
                     pp->zero_rd_cnt++;
                 else if (nread > 0)
                     pp->zero_rd_cnt = 0;
                 return nread;
             }
-            else if (res == PP_PARSE_SUCCESS) {
+            else if (res == PP_PARSE_RESULT_SUCCESS) {
                 nread = pp->pos.npos;
                 break;
             }
-            else if (res == PP_PARSE_NO_MATCH) {
+            else if (res == PP_PARSE_RESULT_NO_MATCH) {
                 pp->pos = pp_pos_copy(&pos_cpy);
                 continue;
             }
             else {
                 pp_print_parse_error(pp, "Failed to parse string\n");
-                pp_stack_debug(&(pp->stack));
+                //pp_stack_debug(&(pp->stack));
+                assert(1==0);
                 return -1;
             }
         }
-
     }
 }

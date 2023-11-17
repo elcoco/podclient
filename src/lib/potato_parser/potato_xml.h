@@ -28,6 +28,7 @@
 #define PP_MAX_ATTR_KEY       256
 #define PP_MAX_ATTR_VALUE     256
 
+
 // the stuff in the opening tag eg: <book category="bla">
 // TODO, not implemented yet
 struct PPAttr {
@@ -38,7 +39,5 @@ struct PPAttr {
 
 struct PP pp_xml_init(handle_data_cb data_cb);
 void pp_xml_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-
-
 
 #endif
