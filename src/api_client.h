@@ -14,7 +14,7 @@
 
 #include <curl/curl.h>
 
-#include "utils.h"
+//#include "utils.h"
 #include "podcast.h"
 #include "lib/json/json.h"
 
@@ -43,10 +43,15 @@
 
 #define JSON_READ_CHUNK_SIZE CURL_MAX_WRITE_SIZE
 
+extern int do_debug;
+extern int do_info;
+extern int do_error;
+
 typedef size_t(*curl_write_cb)(char*, size_t, size_t, void*);
 
 enum APIClientReqResult {
     API_CLIENT_REQ_OUT_OF_MEMORY,
+    API_CLIENT_REQ_PARSE_ERROR,
     API_CLIENT_REQ_SERIALIZE_ERROR,
     API_CLIENT_REQ_ERROR,
     API_CLIENT_REQ_CURL_ERROR,
@@ -75,9 +80,6 @@ struct APIClient {
     int  port;
 
     long  timeout;
-
-
-
 };
 
 // Is passed to curl callback as user data.

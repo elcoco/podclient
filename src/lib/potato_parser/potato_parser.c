@@ -4,9 +4,9 @@
 #define DO_INFO  1
 #define DO_ERROR 1
 
-#define DEBUG(M, ...) if(DO_DEBUG){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
-#define INFO(M, ...) if(DO_INFO){fprintf(stdout, M, ##__VA_ARGS__);}
-#define ERROR(M, ...) if(DO_ERROR){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
+#define DEBUG(M, ...) if(do_debug){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
+#define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
+#define ERROR(M, ...) if(do_error){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
 
 #define ASSERTF(A, M, ...) if(!(A)) {ERROR(M, ##__VA_ARGS__); assert(A); }
 #define ARR_SIZE(X) {sizeof(X) / sizeof(*X)}
@@ -190,6 +190,7 @@ int pp_stack_put(struct PPStack *stack, struct PPItem ji)
 int pp_stack_pop(struct PPStack *stack)
 {
     ASSERTF(stack->pos >= 0, "Can't POP, stack is empty!\n");
+    //DEBUG("[%d] POP: %s\n", stack->pos, stack->stack[stack->pos].data);
     memset(&(stack->stack[stack->pos]), 0, sizeof(struct PPItem));
     (stack->pos)--;
     return 0;
@@ -477,6 +478,10 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
             pp->zero_rd_cnt = 0;
             nread = pp->pos.npos;
         }
+        else if (res == PP_PARSE_RESULT_ERROR) {
+            pp_print_parse_error(pp, "Failed to parse string\n");
+            return -1;
+        }
         else {
             pp->zero_rd_cnt++;
             return pp->pos.npos;
@@ -506,8 +511,6 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
             }
             else {
                 pp_print_parse_error(pp, "Failed to parse string\n");
-                //pp_stack_debug(&(pp->stack));
-                assert(1==0);
                 return -1;
             }
         }

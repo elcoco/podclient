@@ -696,3 +696,58 @@ size_t xml_parse(struct XML *xml, char **chunks, size_t nchunks)
     DEBUG("read %d bytes\n", nread);
     return nread;
 }
+
+static void test_xml()
+{
+    // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
+    const char *path = "data/test.xml";
+    const int nchunks = 15000;
+    FILE *fp;
+    size_t n;
+    struct XML xml;
+    char chunk[nchunks+1];
+    char chunk_unread[nchunks+1];
+    chunk[0] = '\0';
+    chunk_unread[0] = '\0';
+    char *chunks[2];
+
+    xml = xml_init(xml_handle_data_cb);
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        DEBUG("no such file, %s\n", path);
+        return;
+    }
+
+    while (!feof(fp)) {
+
+        n = fread(chunk, 1, nchunks, fp);
+
+        chunk[n] = '\0';
+
+        if (strlen(chunk_unread) > 0) {
+            chunks[0] = chunk_unread;
+            chunks[1] = chunk;
+        }
+        else {
+            chunks[0] = chunk;
+            chunks[1] = NULL;
+        }
+
+        int nread = xml_parse(&xml, chunks, sizeof(chunks)/sizeof(*chunks));
+        if (nread < 0) {
+            DEBUG("JSON returns 0 read chars\n");
+            break;
+        }
+
+        if (nread < nchunks && nread != 0)
+            strcpy(chunk_unread, chunk+nread);
+        else
+            chunk_unread[0] = '\0';
+    
+    }
+    INFO("CUR SIZE: json:%ld \n", sizeof(xml));
+
+    fclose(fp);
+}
+

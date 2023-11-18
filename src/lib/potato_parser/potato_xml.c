@@ -1,15 +1,15 @@
 #include "potato_xml.h"
 #include "potato_parser.h"
 
-#define DO_DEBUG 1
-#define DO_INFO  1
-#define DO_ERROR 1
+//#define DO_DEBUG 1
+//#define DO_INFO  1
+//#define DO_ERROR 1
 
-#define DEBUG(M, ...) if(DO_DEBUG){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
-#define INFO(M, ...) if(DO_INFO){fprintf(stdout, M, ##__VA_ARGS__);}
-#define ERROR(M, ...) if(DO_ERROR){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
+#define DEBUG(M, ...) if(do_debug){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
+#define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
+#define ERROR(M, ...) if(do_error){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
 
-#define ASSERTF(A, M, ...) if(!(A)) {ERROR(M, ##__VA_ARGS__); assert(A); }
+#define ASSERTF(A, M, ...) if(!(A)) {fprintf(stderr, M, ##__VA_ARGS__); assert(A); }
 
 
 
@@ -99,8 +99,11 @@ enum PPParseResult pp_xml_tag_close_cb(struct PP *pp, struct PPParserEntry *pe, 
     }
 
     // Because of buffer overflow, previous tag can be added with a placeholder in it
-    if (strcmp(item->data, item_prev->data) != 0 && strcmp(item_prev->data, PP_BUFFER_OVERFLOW_PLACEHOLDER)) {
-        ERROR("Unexpected closing tag found, previous open tag doesn't correspond: %s\n", item->data);
+    // Current closing tag can also be a buffer overflow. now we don't have a way to check if
+    // the XML is consistent. large xml tags are probably caused by loads of parameters. So
+    // another way to fix this is to just drop the parameters and only keep the tag.
+    if (strncmp(item->data, PP_BUFFER_OVERFLOW_PLACEHOLDER, PP_MAX_DATA) != 0 && strncmp(item->data, item_prev->data, PP_MAX_DATA) != 0 && strncmp(item_prev->data, PP_BUFFER_OVERFLOW_PLACEHOLDER, PP_MAX_DATA) != 0) {
+        ERROR("Unexpected closing tag found, previous open tag doesn't correspond: >%s<\n", item->data);
         pp_xml_stack_debug(&(pp->stack));
         return PP_PARSE_RESULT_ERROR;
     }
@@ -109,6 +112,7 @@ enum PPParseResult pp_xml_tag_close_cb(struct PP *pp, struct PPParserEntry *pe, 
     pp->handle_data_cb(pp, item->dtype, pp->user_data);
     pp_stack_pop(&(pp->stack));
     pp_stack_pop(&(pp->stack));
+
     return PP_PARSE_RESULT_SUCCESS;
 }
 
@@ -117,18 +121,22 @@ enum PPParseResult pp_xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, s
     // TODO: check if tag ends with />, if so, remove from stack
     assert(item->dtype == PP_DTYPE_TAG_OPEN);  // Test if item is right type
                                                //
-    /*
-    struct PPItem *item_prev = pp_stack_get_from_end(pp, 0);
-    if (item_prev != NULL && item_prev->dtype != PP_DTYPE_TAG_CLOSE) {
-        ERROR("Unexpected opening tag found, previous item is not a closing tag: %s\n", item->data);
-        pp_xml_stack_debug(&(pp->stack));
-        return PP_PARSE_RESULT_ERROR;
-    }
-    */
-    
-    // FIXME why segfault when uncomment
-    //DEBUG("BEFORE: %s\n", item->data);
     int is_single_line = 0;
+
+    // NOTE: Need to look at previous char to determine if this is a single line but there may
+    //       be no previous characters. Could be in previous chunk?
+    //       When doning skip, this information is potentially lost because we report all bytes
+    //       as parsed to the caller. So these do not return on the next call
+    if (strcmp(item->data, PP_BUFFER_OVERFLOW_PLACEHOLDER) == 0) {
+        if (pp->pos.npos < 1) {
+            DEBUG("Like to look behind to determine single line tag, but no chars");
+        }
+        else if (*(pp->pos.c-1) == '/') {
+            DEBUG("open tag is a single line\n")
+            is_single_line = 1;
+        }
+
+    }
 
     // remove trailing slash that closes the tag
     if (str_ends_with(item->data, "/")) {

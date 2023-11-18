@@ -6,7 +6,6 @@
 #include <string.h>
 #include <assert.h>
 
-
 // NOTE If PP_MAX_DATA is too small, the tag is cut off when putting the data in a PPItem.
 //      this MAY cause the string to split on '/', which with XML indicates that the tag should be closed.
 //      This will trigger an error later when the actual closing tag appears.
@@ -30,8 +29,7 @@
 // And can be cropped depending on XML_MAX_DATA.
 #define PP_MAX_PARSE_BUFFER 1024
 
-#define PP_MAX_SKIP_STR         8
-#define PP_MAX_PARSER_ENTRIES  32
+#define PP_MAX_PARSER_ENTRIES  8
 
 // don't save these chars when looking for strings
 #define PP_STR_SEARCH_IGNORE_CHARS "\r\t\n"
@@ -39,14 +37,16 @@
 
 // buffer that holds string while searching for substring.
 // Must be at least as big as the search string
+// Will probably not be very large. eg for xml: "\n<>"
 #define PP_MAX_SEARCH_BUF 32+1
-
 #define PP_MAX_SEARCH_IGNORE_CHARS 10
 
+// NOTE: don't put any spaces here cause this will be split into data/parameters when parsing tag
 #define PP_BUFFER_OVERFLOW_PLACEHOLDER "BUFFER_OVERFLOW!!!"
 
 // How many chars to look behind/ahead the error in the parse string when displaying
 // the error message.
+// Current limitation is that it only looks in current chunk.
 #define PP_ERR_CHARS_CONTEXT 50
 #define XRESET   "\x1B[0m"
 #define XRED     "\x1B[31m"
@@ -56,6 +56,10 @@
 #define XMAGENTA "\x1B[35m"
 #define XCYAN    "\x1B[36m"
 #define XWHITE   "\x1B[37m"
+
+extern int do_debug;
+extern int do_info;
+extern int do_error;
 
 enum PPSearchResult {
     PP_SEARCH_RESULT_SYNTAX_ERROR,       // eg. an unexpected tag. closing a tag that wasn't previously opened
@@ -143,13 +147,13 @@ struct PP {
     int zero_rd_cnt;
 };
 
+// Callbacks
 typedef enum PPParseResult(*entry_cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
 typedef void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data);
 
+
 void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-
 void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm);
-
 
 // helpers
 int str_ends_with(const char *str, const char *substr);

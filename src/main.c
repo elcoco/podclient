@@ -9,11 +9,13 @@
 #include "api_client.h"
 #include "podcast.h"
 #include "lib/json/json.h"
-//#include "lib/xml/xml.h"
 #include "lib/potato_parser/potato_xml.h"
 
 #define SUCCESS 0
 
+int do_debug = 0;
+int do_info = 1;
+int do_error = 1;
 
 struct State {
     char server[API_CLIENT_MAX_SERVER];
@@ -42,6 +44,7 @@ static void show_help(struct State *s)
     printf("  -u    user\n");
     printf("  -k    key\n");
     printf("  -P    podcast url\n");
+    printf("  -D    debugging\n");
 }
 
 static int atoi_err(char *str, int *buf)
@@ -59,7 +62,7 @@ static int parse_args(struct State *s, int argc, char **argv)
     int option;
     DEBUG("Parsing args\n");
 
-    while((option = getopt(argc, argv, "s:p:P:u:k:h")) != -1) {
+    while((option = getopt(argc, argv, "s:p:P:u:k:hD")) != -1) {
         switch (option) {
             case 's':
                 strncpy(s->server, optarg, sizeof(s->server));
@@ -78,6 +81,9 @@ static int parse_args(struct State *s, int argc, char **argv)
                 break;
             case 'k':
                 strncpy(s->key, optarg, sizeof(s->key));
+                break;
+            case 'D':
+                do_debug = 1;
                 break;
             case ':': 
                 ERROR("Option needs a value\n"); 
@@ -160,60 +166,6 @@ static void test_json()
     fclose(fp);
 }
 
-static void test_xml()
-{
-    // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
-    const char *path = "data/test.xml";
-    const int nchunks = 15000;
-    FILE *fp;
-    size_t n;
-    struct XML xml;
-    char chunk[nchunks+1];
-    char chunk_unread[nchunks+1];
-    chunk[0] = '\0';
-    chunk_unread[0] = '\0';
-    char *chunks[2];
-
-    xml = xml_init(xml_handle_data_cb);
-
-    fp = fopen(path, "r");
-    if (fp == NULL) {
-        DEBUG("no such file, %s\n", path);
-        return;
-    }
-
-    while (!feof(fp)) {
-
-        n = fread(chunk, 1, nchunks, fp);
-
-        chunk[n] = '\0';
-
-        if (strlen(chunk_unread) > 0) {
-            chunks[0] = chunk_unread;
-            chunks[1] = chunk;
-        }
-        else {
-            chunks[0] = chunk;
-            chunks[1] = NULL;
-        }
-
-        int nread = xml_parse(&xml, chunks, sizeof(chunks)/sizeof(*chunks));
-        if (nread < 0) {
-            DEBUG("JSON returns 0 read chars\n");
-            break;
-        }
-
-        if (nread < nchunks && nread != 0)
-            strcpy(chunk_unread, chunk+nread);
-        else
-            chunk_unread[0] = '\0';
-    
-    }
-    INFO("CUR SIZE: json:%ld \n", sizeof(xml));
-
-    fclose(fp);
-}
-
 static void test_pp_xml()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
@@ -287,7 +239,7 @@ int main(int argc, char **argv)
     strncpy(client.user, s.user, API_CLIENT_MAX_USER);
     strncpy(client.key, s.key, API_CLIENT_MAX_KEY);
     client.port = s.port;
-    client.timeout = 5L;
+    client.timeout = 20L;
 
     if (strlen(s.podcast) > 0) {
         struct Podcast pod;
@@ -305,7 +257,10 @@ int main(int argc, char **argv)
 
         for (int i=0 ; i<pods_found ; i++) {
             printf("\n** %s\n", pods[i].url);
-            get_episodes(&client, &pods[i]);
+            if (get_episodes(&client, &pods[i]) == API_CLIENT_REQ_PARSE_ERROR) {
+                DEBUG("Fail on: %s\n", pods[i].url);
+                break;
+            }
         }
     }
     return 1;

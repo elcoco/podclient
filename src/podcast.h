@@ -8,7 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "lib/xml/xml.h"
 #include "utils.h"
 
 enum PodFields {
@@ -44,7 +43,7 @@ enum PodActions {
 
 #define EPISODE_JSON_FMT "    {\"title\" : \"%s\", \"guid\" : \"%s\", \"url\" : \"%s\"},\n"
 
-#define PODCAST_MAX_URL       256
+#define PODCAST_MAX_URL       512
 #define PODCAST_MAX_EPISODES   32
 #define PODCAST_MAX_GUID      256
 #define PODCAST_MAX_TITLE     256
@@ -52,6 +51,8 @@ enum PodActions {
 #define PODCAST_MAX_TIMESTAMP 64
 
 #define PODCAST_MAX_SERIALIZED 1024*2
+
+#define PODCAST_DL_FORMAT ""
 
 struct Podcast {
     char url[PODCAST_MAX_URL];

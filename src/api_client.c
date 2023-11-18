@@ -1,5 +1,9 @@
 #include "api_client.h"
 
+#define DEBUG(M, ...) if(do_debug){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
+#define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
+#define ERROR(M, ...) if(do_error){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
+
 struct JSON json;
 int bytes_read = 0;
 
@@ -165,8 +169,8 @@ static size_t ac_req_xml_read_cb(char *ptr, size_t size, size_t nmemb, void *use
     else
         data->unread_chunk[0] = '\0';
 
-    DEBUG("Bytes read/parsed %ld/%d Bytes\n", nmemb*size, nread);
-    DEBUG("Bytes left: %s\n", data->unread_chunk);
+    //DEBUG("Bytes read/parsed %ld/%d Bytes\n", nmemb*size, nread);
+    //DEBUG("Bytes left: %s\n", data->unread_chunk);
     return chunksize;
 }
 
@@ -197,9 +201,20 @@ static enum APIClientReqResult ac_req_get(struct APIClient *client, const char* 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, status_code);
     curl_easy_cleanup(curl);
 
+    if (res == CURLE_OPERATION_TIMEDOUT) {
+        ERROR("Timeout occured\n");
+        return API_CLIENT_REQ_CURL_ERROR;
+    }
     // checks for readerror from ac_req_read_cb()
-    if (res == CURLE_WRITE_ERROR)
-        return API_CLIENT_REQ_OUT_OF_MEMORY;
+    else if (res == CURLE_WRITE_ERROR) {
+        return API_CLIENT_REQ_PARSE_ERROR;
+    }
+    else if (res != CURLE_OK) {
+        ERROR("CURL error: %d\n", res);
+        return API_CLIENT_REQ_CURL_ERROR;
+    }
+
+    //DEBUG("CURL CODE: %d\n", res);
 
     return API_CLIENT_REQ_SUCCESS;
 }
@@ -351,8 +366,8 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     struct APIUserData user_data;
 
     // callback will be called on new parsed xml data
-    struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
-    //struct XML xml = xml_init(episodes_handle_data_cb);
+    //struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
+    struct PP pp = pp_xml_init(episodes_handle_data_cb);
 
     pp.user_data = &user_data;
     struct Episode ep;
@@ -368,14 +383,15 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
 
     enum APIClientReqResult res = ac_req_get(client, pod->url, &user_data, ac_req_xml_read_cb, &status_code);
 
-    assert(pp.stack.pos == -1);  // not all tags were parsed
+    if (res == API_CLIENT_REQ_SUCCESS)
+        assert(pp.stack.pos == -1);  // not all tags were parsed
 
 
     // callback will be called when curl read new data from stream
-    if (res < 0) {
-        ERROR("Failed to make request\n");
-        return API_CLIENT_REQ_UNKNOWN_ERROR;
-    }
+    //if (res < 0) {
+    //    ERROR("Failed to make request\n");
+    //    return API_CLIENT_REQ_UNKNOWN_ERROR;
+    //}
 
     if (status_code == 401) {
         ERROR("Server returned 401, NOT FOUND!\n");
@@ -388,7 +404,8 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     }
 
     //DEBUG("status_code: %ld\n", status_code);
-    return API_CLIENT_REQ_SUCCESS;
+    //return API_CLIENT_REQ_SUCCESS;
+    return res;
 
 }
 

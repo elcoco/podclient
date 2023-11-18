@@ -28,6 +28,10 @@
 #define PP_MAX_ATTR_KEY       256
 #define PP_MAX_ATTR_VALUE     256
 
+extern int do_debug;
+extern int do_info;
+extern int do_error;
+
 
 // the stuff in the opening tag eg: <book category="bla">
 // TODO, not implemented yet
