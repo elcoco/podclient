@@ -1,4 +1,5 @@
 #include "api_client.h"
+#include "lib/potato_parser/potato_parser.h"
 
 #define DEBUG(M, ...) if(do_debug){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
 #define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
@@ -276,7 +277,16 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
     struct APIUserData *data = user_data;
     struct Episode *ep = data->data;
 
-    if (dtype == PP_DTYPE_TAG_CLOSE && strcmp(item->data, "item") == 0) {
+    if (dtype == PP_DTYPE_TAG_OPEN && strcmp(item->data, "enclosure") == 0) {
+        for (int i=0 ; i<PP_XML_MAX_PARAM ; i++) {
+            if (strcmp(item->param[i].key, "url") == 0) {
+                strncpy(ep->url, item->param[i].value, PODCAST_MAX_URL);
+                DEBUG("Found url!\n");
+                break;
+            }
+        }
+    }
+    else if (dtype == PP_DTYPE_TAG_CLOSE && strcmp(item->data, "item") == 0) {
         char path[256] = "";
         sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
         write_to_file(path, "a", EPISODE_JSON_FMT, ep->title, ep->guid, ep->url);
@@ -287,6 +297,8 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
     else if (dtype == PP_DTYPE_STRING || dtype == PP_DTYPE_CDATA) {
         struct PPItem *item_tag = pp_stack_get_from_end(pp, 1);
         struct PPItem *item_item = pp_stack_get_from_end(pp, 2);
+
+
         if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "channel") == 0) {
             if (strcmp(item_tag->data, "title") == 0) {
                 strcpy(ep->podcast->title, item->data);
@@ -299,6 +311,7 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
                 write_to_file(path, "w", "[\n");
             }
         }
+
         else if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "item") == 0) {
 
             if (strcmp(item_tag->data, "title") == 0) {
@@ -308,10 +321,6 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
             else if (strcmp(item_tag->data, "guid") == 0) {
                 strncpy(ep->guid, item->data, PODCAST_MAX_GUID);
                 //DEBUG("GUID:  %s\n", item->data);
-            }
-            else if (strcmp(item_tag->data, "link") == 0) {
-                strncpy(ep->url, item->data, PODCAST_MAX_URL);
-                //DEBUG("LINK:  %s\n", item->data);
             }
         }
     }
@@ -366,8 +375,8 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     struct APIUserData user_data;
 
     // callback will be called on new parsed xml data
-    struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
-    //struct PP pp = pp_xml_init(episodes_handle_data_cb);
+    //struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
+    struct PP pp = pp_xml_init(episodes_handle_data_cb);
 
     pp.user_data = &user_data;
     struct Episode ep;
