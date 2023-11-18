@@ -12,6 +12,18 @@
 #define ASSERTF(A, M, ...) if(!(A)) {fprintf(stderr, M, ##__VA_ARGS__); assert(A); }
 
 
+void pp_xml_param_to_string(struct PPXMLParam *params, int max_amount, char *buf, int max_buf)
+{
+    struct PPXMLParam *param = params;
+
+    for (int i=0 ; i<max_amount ; i++, param++) {
+        if (param->key == NULL || param->value == NULL || strlen(param->key) == 0)
+            break;
+        char param_buf[256] = "";
+        sprintf(param_buf, "%s=%s, ", param->key, param->value);
+        strncat(buf, param_buf, max_buf);
+    }
+}
 
 void pp_xml_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
 {
@@ -24,11 +36,13 @@ void pp_xml_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
     switch (dtype) {
         case PP_DTYPE_TAG_OPEN:
             pp_print_spaces(spaces * pp->stack.pos);
-            if (xi->param != NULL) {
-                INFO("TAG_OPEN: %s, param: %s\n", xi->data, xi->param);
+            char param_buf[512] = "";
+            pp_xml_param_to_string(xi->param, PP_XML_MAX_PARAM, param_buf, 512);
+            if (strlen(param_buf) != 0) {
+                INFO("TAG_OPEN: %s, param: %s\n", xi->data, param_buf);
             }
             else {
-                INFO("TAG_OPEN: %s\n", xi->data);
+              INFO("TAG_OPEN: %s\n", xi->data);
             }
             break;
         case PP_DTYPE_TAG_CLOSE:
@@ -116,6 +130,46 @@ enum PPParseResult pp_xml_tag_close_cb(struct PP *pp, struct PPParserEntry *pe, 
     return PP_PARSE_RESULT_SUCCESS;
 }
 
+static void pp_xml_param_sanitize(struct PPXMLParam *param)
+{
+    /* Remove quotes around value, they're stupid */
+    if (strlen(param->value) <= 0)
+        return;
+
+    if (param->value[0] == '"')
+        param->value++;
+    if (param->value[strlen(param->value)-1] == '"')
+        *(param->value + strlen(param->value) -1) = '\0';
+}
+
+static int pp_xml_item_parse_parameters(struct PPItem *item, char *str, size_t max_amount)
+{
+    /* Parse parameters into structs.
+     * Return amount of parameters parsed or -1 on error */
+    struct PPXMLParam *ptr = item->param;
+    char *rest;
+    int i = 0;
+
+    for (; i<max_amount ; i++, ptr++) {
+
+        if (pp_str_split_at_char(str, ' ', &rest) < 0)
+            break;
+
+        if (pp_str_split_at_char(str, '=', &ptr->value) < 0) {
+            ERROR("Failed to parse parameter: %s\n", str);
+            i = -1;
+            break;
+        }
+        ptr->key = str;
+        pp_xml_param_sanitize(ptr);
+
+        //DEBUG("Parameter: %s = %s\n", ptr->key, ptr->value);
+        str = rest;
+    }
+    return i;
+}
+
+
 enum PPParseResult pp_xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item)
 {
     // TODO: check if tag ends with />, if so, remove from stack
@@ -135,7 +189,6 @@ enum PPParseResult pp_xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, s
             DEBUG("open tag is a single line\n")
             is_single_line = 1;
         }
-
     }
 
     // remove trailing slash that closes the tag
@@ -144,7 +197,12 @@ enum PPParseResult pp_xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, s
         is_single_line = 1;
     }
 
-    pp_str_split_at_char(item->data, ' ', &(item->param));
+    char *param_str;
+    pp_str_split_at_char(item->data, ' ', &param_str);
+
+    if (param_str != NULL)
+        pp_xml_item_parse_parameters(item, param_str, PP_XML_MAX_PARAM);
+
     pp_stack_put(&(pp->stack), *item);
     pp->handle_data_cb(pp, item->dtype, pp->user_data);
 

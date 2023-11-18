@@ -25,20 +25,10 @@
 #define PP_XML_CHAR_TAG_CLOSE_END   ">"
 #define PP_XML_CHAR_TAG_SIGNLE_LINE_CLOSE_END   "/>"
 
-#define PP_MAX_ATTR_KEY       256
-#define PP_MAX_ATTR_VALUE     256
-
 extern int do_debug;
 extern int do_info;
 extern int do_error;
 
-
-// the stuff in the opening tag eg: <book category="bla">
-// TODO, not implemented yet
-struct PPAttr {
-    char key[PP_MAX_ATTR_KEY];
-    char value[PP_MAX_ATTR_VALUE];
-};
 
 
 struct PP pp_xml_init(handle_data_cb data_cb);

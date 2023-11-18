@@ -31,6 +31,11 @@
 
 #define PP_MAX_PARSER_ENTRIES  8
 
+// Parameters are an XML thing
+#define PP_XML_MAX_PARAM         16
+#define PP_XML_MAX_PARAM_KEY     256
+#define PP_XML_MAX_PARAM_VALUE   256
+
 // don't save these chars when looking for strings
 #define PP_STR_SEARCH_IGNORE_CHARS "\r\t\n"
 #define PP_STR_SEARCH_IGNORE_LEADING "\r\t "
@@ -60,6 +65,7 @@
 extern int do_debug;
 extern int do_info;
 extern int do_error;
+
 
 enum PPSearchResult {
     PP_SEARCH_RESULT_SYNTAX_ERROR,       // eg. an unexpected tag. closing a tag that wasn't previously opened
@@ -100,11 +106,21 @@ enum PPDtype {
     PP_DTYPE_HEADER
 };
 
+// the stuff in the opening tag eg: <book category="bla">
+// TODO, not implemented yet
+struct PPXMLParam {
+    char *key;
+    char *value;
+
+    //char key[PP_XML_MAX_PARAM_KEY];
+    //char value[PP_XML_MAX_PARAM_VALUE];
+};
+
 /* Holds the actual data, eg: tag, string, object etc... */
 struct PPItem {
     enum PPDtype dtype;
     char data[PP_MAX_DATA];
-    char *param;
+    struct PPXMLParam param[PP_XML_MAX_PARAM];
 };
 
 struct PPStack {

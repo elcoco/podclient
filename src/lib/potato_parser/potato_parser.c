@@ -313,7 +313,8 @@ static struct PPItem pp_item_init(enum PPDtype dtype, char *data)
     struct PPItem item;
     item.dtype = dtype;
     strncpy(item.data, data, PP_MAX_DATA);
-    item.param = NULL;
+    //item.param = NULL;
+    memset(&(item.param), 0, PP_XML_MAX_PARAM * sizeof(struct PPXMLParam));
     return item;
 }
 

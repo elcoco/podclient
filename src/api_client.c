@@ -366,8 +366,8 @@ enum APIClientReqResult get_episodes(struct APIClient *client, struct Podcast *p
     struct APIUserData user_data;
 
     // callback will be called on new parsed xml data
-    //struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
-    struct PP pp = pp_xml_init(episodes_handle_data_cb);
+    struct PP pp = pp_xml_init(pp_xml_handle_data_cb);
+    //struct PP pp = pp_xml_init(episodes_handle_data_cb);
 
     pp.user_data = &user_data;
     struct Episode ep;
