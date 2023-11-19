@@ -16,9 +16,75 @@
 
 static struct PPPosition pp_pos_init(char **chunks, size_t nchunks);
 static int pp_pos_next(struct PPPosition *pos);
+static int pp_pos_prev(struct PPPosition *pos);
 static struct PPPosition pp_pos_copy(struct PPPosition *src);
+static void pp_pos_debug(struct PPPosition *pos);
 
 // HELPERS ////////////////////////////
+
+static void pp_str_reverse(char *str)
+{
+    char *lptr = str;
+    char *rptr = str+strlen(str)-1;
+    char buf;
+
+    for (int i=0 ; i<strlen(str)/2 ; i++) {
+        buf = *lptr;
+        *lptr = *rptr;
+        *rptr = buf;
+        lptr++;
+        rptr--;
+    }
+}
+
+static void pp_pos_debug(struct PPPosition *pos)
+{
+    /* Print out current buffer position with some context.
+     * Does look in chunks before and after. */
+    char lctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string left from current char
+    char rctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string right from current char
+
+    char *lptr = lctext;
+    char *rptr = rctext;
+
+    struct PPPosition pos_cpy = pp_pos_copy(pos);
+
+    // get context
+    for (int i=0 ; i<PP_ERR_CHARS_CONTEXT ; i++, lptr++) {
+        if (pp_pos_prev(&pos_cpy) < 0)
+            break;
+        *lptr = *(pos_cpy.c);
+        *(lptr+1) = '\0';
+    }
+
+    pp_str_reverse(lctext);
+
+    pos_cpy = pp_pos_copy(pos);
+
+    for (int i=0 ; i<PP_ERR_CHARS_CONTEXT ; i++, rptr++) {
+        if (pp_pos_next(&pos_cpy) < 0)
+            break;
+        *rptr = *(pos_cpy.c);
+        *(rptr+1) = '\0';
+    }
+
+    char buf[16] = "";
+
+    if (*(pos->c) == '\n')
+        strncpy(buf, "\n\\n", sizeof(buf));
+    else if (*(pos->c) == '\t')
+        strncpy(buf, "\t\\n", sizeof(buf));
+    else if (*(pos->c) == '\r')
+        strncpy(buf, "\r\\r", sizeof(buf));
+    // check if printable
+    else if (*(pos->c) < 33 || *(pos->c) > 126)
+        strncpy(buf, "*", 1);
+    else
+        strncpy(buf, pos->c, 1);
+
+    printf("\n%s%s%s%s%s\n", lctext, XRED, buf, XRESET, rctext);
+
+}
 
 static enum PPSearchResult pp_str_search(struct PPPosition *pos, const char *search_str, const char *ignore_chars, char *save_buf, int save_buf_size)
 {
@@ -38,6 +104,8 @@ static enum PPSearchResult pp_str_search(struct PPPosition *pos, const char *sea
     int save_buf_i = 0;
 
     while (1) {
+        //DEBUG("data: >%s<\n", pos->c);
+        //pp_pos_debug(pos);
         
         if (strlen(buf) == PP_MAX_SEARCH_BUF-1) {
             // shift string one place to the left
@@ -183,6 +251,7 @@ int pp_stack_put(struct PPStack *stack, struct PPItem ji)
     ASSERTF(stack->pos <= PP_MAX_STACK -1, "Can't PUT, stack is full!\n");
     ASSERTF(ji.dtype != PP_DTYPE_UNKNOWN, "item has no datatype!\n");
     (stack->pos)++;
+    //DEBUG("[%d] PUT: %s\n", stack->pos, ji.data);
     memcpy(&(stack->stack[stack->pos]), &ji, sizeof(struct PPItem));
     return 0;
 }
@@ -201,200 +270,6 @@ struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset)
     if (offset > pp->stack.pos+1)
         return NULL;
     return &(pp->stack.stack[pp->stack.pos - offset]);
-}
-
-
-// POSITION ////////////////////////////
-static struct PPPosition pp_pos_init(char **chunks, size_t nchunks)
-{
-    struct PPPosition pos;
-    pos.max_chunks = nchunks;
-    pos.chunks = chunks;
-    pos.c = pos.chunks[0];
-    pos.npos = 0;
-    pos.length = strlen(pos.c);
-    pos.cur_chunk = 0;
-    return pos;
-}
-
-static int pp_pos_next(struct PPPosition *pos)
-{
-    /* Iter over chunks, one char at a time.
-     * Move to next chunk if all data in chunk is read
-     */
-    if (pos->npos >= pos->length-1) {
-        if (pos->cur_chunk < pos->max_chunks-1 &&  pos->chunks[pos->cur_chunk+1] != NULL) {
-            // goto next chunk
-            pos->cur_chunk++;
-            pos->npos = 0;
-            pos->c = pos->chunks[pos->cur_chunk];
-            pos->length = strlen(pos->chunks[pos->cur_chunk]);
-            return 0;
-        }
-        else {
-            // no more chunks
-            return -1;
-        }
-    }
-    (pos->c)++;
-    (pos->npos)++;
-    return 0;
-}
-
-static struct PPPosition pp_pos_copy(struct PPPosition *src)
-{
-    /* Copy struct to new struct */
-    struct PPPosition pos_cpy;
-    memcpy(&pos_cpy, src, sizeof(struct PPPosition));
-    return pos_cpy;
-}
-
-static void pp_pos_print_chunks(struct PPPosition *pos)
-{
-    struct PPPosition pos_cpy = pp_pos_copy(pos);
-    printf("\n** CHUNKS:\n");
-    int cur_chunk = -1;
-    while (1) {
-        if (cur_chunk != pos_cpy.cur_chunk) {
-            cur_chunk = pos_cpy.cur_chunk;
-            printf("**** CHUNK %d:\n", cur_chunk);
-        }
-        printf("%c", *pos_cpy.c);
-        
-        if (pp_pos_next(&pos_cpy) < 0)
-            break;
-    }
-    printf("END CHUNKS\n\n");
-}
-
-
-// PARSER //////////////////////////////
-static void pp_print_parse_error(struct PP *pp, const char *msg)
-{
-    if (msg != NULL)
-        ERROR("%s", msg);
-
-    char lctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string left from current char
-    char rctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string right from current char
-
-    char *lptr = lctext;
-    char *rptr = rctext;
-
-    int j = PP_ERR_CHARS_CONTEXT;
-
-    // get context
-    for (int i=0 ; i<PP_ERR_CHARS_CONTEXT ; i++, j--) {
-
-        // check if we go out of left string bounds
-        if ((pp->pos.npos - j) >= 0) {
-            *lptr = *(pp->pos.c - j);                  // add char to string
-            lptr++;
-        }
-        // TODO ltext and rtext doesn't look into chunks other than current chunk
-        // check if we go out of right string bounds
-        // BUG this is not bugfree
-        if ((pp->pos.npos + i +1) < pp->pos.length) {
-            *rptr = *(pp->pos.c + i +1);               // add char to string
-            rptr++;
-        }
-    }
-    rctext[PP_ERR_CHARS_CONTEXT] = '\0';
-    lctext[PP_ERR_CHARS_CONTEXT] = '\0';
-
-    ERROR("PP syntax error: >%c< @ %d\n", *(pp->pos.c), pp->pos.npos);
-    ERROR("\n%s%s%c%s<--%s%s\n", lctext, XRED, *(pp->pos.c), XBLUE, XRESET, rctext);
-
-    //stack_debug(pp);
-}
-
-static struct PPItem pp_item_init(enum PPDtype dtype, char *data)
-{
-    assert(dtype != PP_DTYPE_UNKNOWN); // PPItem should always have a datatype
-    struct PPItem item;
-    item.dtype = dtype;
-    strncpy(item.data, data, PP_MAX_DATA);
-    //item.param = NULL;
-    memset(&(item.param), 0, PP_XML_MAX_PARAM * sizeof(struct PPXMLParam));
-    return item;
-}
-
-int pp_item_sanitize(struct PPItem *item, struct PPParserEntry *pe)
-{
-    /* Sanitize, clear tag chars etc from item data */
-    // remove leading chars
-    char *lptr = item->data;
-    char *rptr = item->data+(strlen(pe->start));
-    while (*rptr != '\0')
-        *lptr++ = *rptr++;
-    *lptr = '\0';
-
-    // remove trailing chars
-    item->data[strlen(item->data) - strlen(pe->end)] = '\0';
-    return 0;
-}
-
-void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm)
-{
-    /* Add a parse entry to the pp struct.
-     * Parse entries define the start/end strings when parsing a file
-     * eg: when searching for cdata in an XML file this means
-     *       start: <![CDATA[
-     *       end:   ]]>
-     *       capture everything inbetween.
-     */
-    assert(pp->max_entries+1 <= PP_MAX_PARSER_ENTRIES); // entries max reached!
-    pp->max_entries++;
-    pp->entries[pp->max_entries-1] = (struct PPParserEntry){start, end, dtype, cb, pm};
-}
-
-enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, struct PPParserEntry *pe)
-{
-    enum PPSearchResult res_start = pp_str_search(&(pp->pos), pe->start, " \r\n\t", NULL, -1);
-
-    if (res_start != PP_SEARCH_RESULT_SUCCESS)
-        return PP_PARSE_RESULT_NO_MATCH;
-
-    // rewind to start of found item to capture the whole thing
-    pp->pos = pp_pos_copy(pos_cpy);
-
-    // Need to search with buffer here
-    char parse_buf[PP_MAX_PARSE_BUFFER] = "";
-    enum PPSearchResult res_end = pp_str_search(&(pp->pos), pe->end, NULL, parse_buf, PP_MAX_PARSE_BUFFER);
-
-    if (res_end == PP_SEARCH_RESULT_END_OF_DATA) {
-        pp->skip = *pe;
-        pp->skip_is_set = 1;
-        return PP_PARSE_RESULT_INCOMPLETE;
-    }
-    else if (res_end == PP_SEARCH_RESULT_SYNTAX_ERROR) {
-        return PP_PARSE_RESULT_ERROR;
-    }
-    else {
-        pp->skip_is_set = 0;
-    }
-
-    char *sanitised = remove_leading_chars(parse_buf, " \r\n\t");
-    struct PPItem item = pp_item_init(pe->dtype, sanitised);
-    pp_item_sanitize(&item, pe);
-
-                                             
-    if (pe->cb != NULL) {
-        enum PPParseResult cb_res = pe->cb(pp, pe, &item);
-        if  (cb_res < PP_PARSE_RESULT_SUCCESS)
-            return cb_res;
-    }
-    else {
-        assert(item.dtype != PP_DTYPE_UNKNOWN);  // trying to use uninitialised item
-        pp_stack_put(&(pp->stack), item);
-        pp->handle_data_cb(pp, item.dtype, pp->user_data);
-        pp_stack_pop(&(pp->stack));
-
-    }
-
-    if (pe->greedy == PP_METHOD_GREEDY)
-        pp_pos_next(&(pp->pos));
-
-    return PP_PARSE_RESULT_SUCCESS;
 }
 
 void pp_xml_stack_debug(struct PPStack *stack)
@@ -437,6 +312,265 @@ void pp_xml_stack_debug(struct PPStack *stack)
     }
 }
 
+
+// POSITION ////////////////////////////
+static struct PPPosition pp_pos_init(char **chunks, size_t nchunks)
+{
+    struct PPPosition pos;
+    pos.max_chunks = nchunks;
+    pos.chunks = chunks;
+    pos.c = pos.chunks[0];
+    pos.npos = 0;
+    pos.length = strlen(pos.c);
+    pos.cur_chunk = 0;
+    return pos;
+}
+
+static int pp_pos_next(struct PPPosition *pos)
+{
+    /* Iter over chunks, one char at a time.
+     * Move to next chunk if all data in chunk is read
+     */
+    if (pos->npos >= pos->length-1) {
+        if (pos->cur_chunk < pos->max_chunks-1 &&  pos->chunks[pos->cur_chunk+1] != NULL) {
+            // goto next chunk
+            pos->cur_chunk++;
+            pos->npos = 0;
+            pos->c = pos->chunks[pos->cur_chunk];
+            pos->length = strlen(pos->chunks[pos->cur_chunk]);
+            return 0;
+        }
+        else {
+            // no more chunks
+            return -1;
+        }
+    }
+    (pos->c)++;
+    (pos->npos)++;
+    return 0;
+}
+
+static int pp_pos_prev(struct PPPosition *pos)
+{
+    /* Iter over chunks, one char at a time.
+     * Move to next chunk if all data in chunk is read
+     */
+    if (pos->npos == 0) {
+        if (pos->cur_chunk != 0) {
+            // goto prev chunk
+            pos->cur_chunk--;
+            pos->npos = strlen(pos->chunks[pos->cur_chunk]) -1;
+            pos->c = pos->chunks[pos->cur_chunk] + pos->npos;
+            pos->length = strlen(pos->chunks[pos->cur_chunk]);
+            return 0;
+        }
+        else {
+            // we are on first chunk
+            return -1;
+        }
+    }
+    (pos->c)--;
+    (pos->npos)--;
+    return 0;
+}
+
+static struct PPPosition pp_pos_copy(struct PPPosition *src)
+{
+    /* Copy struct to new struct */
+    struct PPPosition pos_cpy;
+    memcpy(&pos_cpy, src, sizeof(struct PPPosition));
+    return pos_cpy;
+}
+
+/*
+static void pp_pos_print_chunks(struct PPPosition *pos)
+{
+    struct PPPosition pos_cpy = pp_pos_copy(pos);
+    printf("\n** CHUNKS:\n");
+    int cur_chunk = -1;
+    while (1) {
+        if (cur_chunk != pos_cpy.cur_chunk) {
+            cur_chunk = pos_cpy.cur_chunk;
+            printf("**** CHUNK %d:\n", cur_chunk);
+        }
+        printf("%c", *pos_cpy.c);
+        
+        if (pp_pos_next(&pos_cpy) < 0)
+            break;
+    }
+    printf("END CHUNKS\n\n");
+}
+*/
+
+
+// PARSER //////////////////////////////
+static void pp_print_parse_error(struct PP *pp, const char *msg)
+{
+    if (msg != NULL)
+        ERROR("%s", msg);
+
+    char lctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string left from current char
+    char rctext[PP_ERR_CHARS_CONTEXT+1] = "";       // buffer for string right from current char
+
+    char *lptr = lctext;
+    char *rptr = rctext;
+
+    int j = PP_ERR_CHARS_CONTEXT;
+
+    // get context
+    for (int i=0 ; i<PP_ERR_CHARS_CONTEXT ; i++, j--) {
+
+        // check if we go out of left string bounds
+        if ((pp->pos.npos - j) >= 0) {
+            *lptr = *(pp->pos.c - j);                  // add char to string
+            lptr++;
+        }
+        // TODO ltext and rtext doesn't look into chunks other than current chunk
+        // check if we go out of right string bounds
+        // BUG this is not bugfree
+        if ((pp->pos.npos + i +1) < pp->pos.length) {
+            *rptr = *(pp->pos.c + i +1);               // add char to string
+            rptr++;
+        }
+    }
+    rctext[PP_ERR_CHARS_CONTEXT] = '\0';
+    lctext[PP_ERR_CHARS_CONTEXT] = '\0';
+
+    ERROR("PP syntax error: '%s%c%s' @ %d\n", XRED, *(pp->pos.c), XRESET, pp->pos.npos);
+    ERROR("\n%s%s%c%s<--%s%s\n", lctext, XRED, *(pp->pos.c), XBLUE, XRESET, rctext);
+
+    //stack_debug(pp);
+}
+
+static struct PPItem pp_item_init(enum PPDtype dtype, char *data)
+{
+    assert(dtype != PP_DTYPE_UNKNOWN); // PPItem should always have a datatype
+    struct PPItem item;
+    item.dtype = dtype;
+    strncpy(item.data, data, PP_MAX_DATA);
+    //item.param = NULL;
+    memset(&(item.param), 0, PP_XML_MAX_PARAM * sizeof(struct PPXMLParam));
+    return item;
+}
+
+int pp_item_sanitize(struct PPItem *item, struct PPParserEntry *pe)
+{
+    /* Sanitize, clear tag chars etc from item data */
+    // remove leading chars
+    char *lptr = item->data;
+    char *rptr = item->data+(strlen(pe->start));
+    while (*rptr != '\0')
+        *lptr++ = *rptr++;
+    *lptr = '\0';
+
+    // remove trailing chars
+    item->data[strlen(item->data) - strlen(pe->end)] = '\0';
+    return 0;
+}
+
+void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, const char *ignore_chars, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm)
+{
+    /* Add a parse entry to the pp struct.
+     * Parse entries define the start/end strings when parsing a file
+     * eg: when searching for cdata in an XML file this means
+     *       start: <![CDATA[
+     *       end:   ]]>
+     *       capture everything inbetween.
+     */
+    assert(pp->max_entries+1 <= PP_MAX_PARSER_ENTRIES); // entries max reached!
+    pp->max_entries++;
+    pp->entries[pp->max_entries-1] = (struct PPParserEntry){start, end, ignore_chars, dtype, cb, pm};
+}
+
+enum PPParseResult pp_parse_entry(struct PP *pp, struct PPPosition *pos_cpy, struct PPParserEntry *pe)
+{
+    enum PPSearchResult res_start = pp_str_search(&(pp->pos), pe->start, pe->ignore_chars, NULL, -1);
+
+    if (res_start != PP_SEARCH_RESULT_SUCCESS)
+        return PP_PARSE_RESULT_NO_MATCH;
+
+    // Need to search with buffer here
+    char parse_buf[PP_MAX_PARSE_BUFFER] = "";
+
+    //DEBUG("Found start: %s\n", pe->start);
+
+    // if end string is not defined, only skip to start string
+    if (strlen(pe->end) == 0) {
+        struct PPItem item = pp_item_init(pe->dtype, "");
+
+        if (pe->cb != NULL) {
+            enum PPParseResult cb_res = pe->cb(pp, pe, &item);
+            if  (cb_res < PP_PARSE_RESULT_SUCCESS)
+                return cb_res;
+        }
+        else {
+            assert(item.dtype != PP_DTYPE_UNKNOWN);  // trying to use uninitialised item
+            pp_stack_put(&(pp->stack), item);
+            pp->handle_data_cb(pp, item.dtype, pp->user_data);
+            pp_stack_pop(&(pp->stack));
+        }
+
+        if (pe->greedy == PP_METHOD_GREEDY)
+            pp_pos_next(&(pp->pos));
+
+        return PP_PARSE_RESULT_SUCCESS;
+    }
+
+    // rewind to start of found item to capture the whole thing
+    //pp->pos = pp_pos_copy(pos_cpy);
+
+    // If start and end strings are the same, we will never be able to go any further
+    // To be able to find the end string we need to hop over the start string
+    if (strcmp(pe->start, pe->end) == 0) {
+        if (pp_pos_next(&(pp->pos)) < 0)
+            return PP_PARSE_RESULT_INCOMPLETE;
+    }
+    else {
+        // rewind to start of found item to capture the whole thing
+        pp->pos = pp_pos_copy(pos_cpy);
+    }
+
+    enum PPSearchResult res_end = pp_str_search(&(pp->pos), pe->end, NULL, parse_buf, PP_MAX_PARSE_BUFFER);
+
+    if (res_end == PP_SEARCH_RESULT_END_OF_DATA) {
+        pp->skip = *pe;
+        pp->skip_is_set = 1;
+        return PP_PARSE_RESULT_INCOMPLETE;
+    }
+    else if (res_end == PP_SEARCH_RESULT_SYNTAX_ERROR) {
+        return PP_PARSE_RESULT_ERROR;
+    }
+    else {
+        pp->skip_is_set = 0;
+    }
+
+    // remove leading spaces/newlines and the open/close tags
+    char *sanitised = remove_leading_chars(parse_buf, " \r\n\t");
+    struct PPItem item = pp_item_init(pe->dtype, sanitised);
+
+    // TODO make sanitize chack if the chars actually correspond with start/end strings
+    pp_item_sanitize(&item, pe);
+
+    //DEBUG("FOUND END: %s\n", parse_buf);
+                                             
+    if (pe->cb != NULL) {
+        enum PPParseResult cb_res = pe->cb(pp, pe, &item);
+        if  (cb_res < PP_PARSE_RESULT_SUCCESS)
+            return cb_res;
+    }
+    else {
+        assert(item.dtype != PP_DTYPE_UNKNOWN);  // trying to use uninitialised item
+        pp_stack_put(&(pp->stack), item);
+        pp->handle_data_cb(pp, item.dtype, pp->user_data);
+        pp_stack_pop(&(pp->stack));
+    }
+
+    if (pe->greedy == PP_METHOD_GREEDY)
+        pp_pos_next(&(pp->pos));
+
+    return PP_PARSE_RESULT_SUCCESS;
+}
+
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 {
     // DONE: when tag ends on same line, trailing slash is still there
@@ -447,8 +581,6 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
     // TODO: Sererate parameters in XML version
     pp->pos = pp_pos_init(chunks, nchunks);
     size_t nread = 0;
-
-    int passc = 0;
 
     if (pp->zero_rd_cnt >= pp->pos.max_chunks-1) {
         assert(pp->skip_is_set == 1);                // trying to skip to skip char but it has no intentional value
@@ -479,7 +611,7 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
             pp->zero_rd_cnt = 0;
             nread = pp->pos.npos;
         }
-        else if (res == PP_PARSE_RESULT_ERROR) {
+        else if (res == PP_SEARCH_RESULT_SYNTAX_ERROR) {
             pp_print_parse_error(pp, "Failed to parse string\n");
             return -1;
         }
@@ -507,6 +639,12 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
                 break;
             }
             else if (res == PP_PARSE_RESULT_NO_MATCH) {
+                if (i == pp->max_entries-1) {
+                    DEBUG("No match was found\n");
+                    return nread;
+                }
+                assert(i != pp->max_entries-1 && "endless loop!");
+                //DEBUG("NO match\n");
                 pp->pos = pp_pos_copy(&pos_cpy);
                 continue;
             }

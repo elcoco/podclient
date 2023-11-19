@@ -5,7 +5,7 @@
 #define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
 #define ERROR(M, ...) if(do_error){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
 
-struct JSON json;
+//struct JSON json;
 int bytes_read = 0;
 
 static void ac_unescape(char *str)
@@ -46,18 +46,87 @@ static char* ac_str_sanitize(char *str)
     return str;
 }
 
-static int str_rm_from_start(char *str, size_t n)
+static int write_to_file(char *path, const char *mode, const char *fmt, ...)
 {
-    if (strlen(str) < n)
+    va_list ptr;
+    va_start(ptr, fmt);
+
+    int res = mkdir(dirname(path), 0755);
+    if (res < 0 && errno != EEXIST) {
+        ERROR("Failed to create dir\n");
+        perror(NULL);
         return -1;
+    }
+    path[strlen(path)] = '/';
 
-    char *lptr = str;
-    char *rptr = str+n;
-    while (*rptr != '\0')
-        *lptr++ = *rptr++;
+    FILE *fp = fopen(path, mode);
+    if (fp == NULL) {
+        ERROR("Failed to open file for writing, %s\n", path);
+        return -1;
+    }
+    vfprintf(fp, fmt, ptr);
+    fclose(fp);
 
-    *(lptr + 1) = '\0';
+    va_end(ptr);
     return 0;
+}
+
+
+static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
+{
+    /* Callback is passed to json lib to handle incoming data.
+     * Data is saved in podcast struct */
+    struct PPItem *item = pp_stack_get_from_end(pp, 0);
+    struct APIUserData *data = user_data;
+    struct Episode *ep = data->data;
+
+    if (dtype == PP_DTYPE_TAG_OPEN && strcmp(item->data, "enclosure") == 0) {
+        for (int i=0 ; i<PP_XML_MAX_PARAM ; i++) {
+            if (strcmp(item->param[i].key, "url") == 0) {
+                strncpy(ep->url, item->param[i].value, PODCAST_MAX_URL);
+                //DEBUG("Found url!\n");
+                break;
+            }
+        }
+    }
+    else if (dtype == PP_DTYPE_TAG_CLOSE && strcmp(item->data, "item") == 0) {
+        char path[256] = "";
+        sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
+        write_to_file(path, "a", EPISODE_JSON_FMT, ep->title, ep->guid, ep->url);
+        ep->url[0] = '\0';
+        ep->guid[0] = '\0';
+        ep->title[0] = '\0';
+    }
+    else if (dtype == PP_DTYPE_STRING || dtype == PP_DTYPE_CDATA) {
+        struct PPItem *item_tag = pp_stack_get_from_end(pp, 1);
+        struct PPItem *item_item = pp_stack_get_from_end(pp, 2);
+
+
+        if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "channel") == 0) {
+            if (strcmp(item_tag->data, "title") == 0) {
+                strcpy(ep->podcast->title, item->data);
+                //DEBUG("PODCAST TITLE: %s\n", item->data);
+                printf("   %s\n", item->data);
+
+
+                char path[256] = "";
+                sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
+                write_to_file(path, "w", "[\n");
+            }
+        }
+
+        else if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "item") == 0) {
+
+            if (strcmp(item_tag->data, "title") == 0) {
+                strncpy(ep->title, item->data, PODCAST_MAX_TITLE);
+                printf("   - %s\n", item->data);
+            }
+            else if (strcmp(item_tag->data, "guid") == 0) {
+                strncpy(ep->guid, item->data, PODCAST_MAX_GUID);
+                //DEBUG("GUID:  %s\n", item->data);
+            }
+        }
+    }
 }
 
 static size_t ac_req_json_read_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
@@ -66,10 +135,6 @@ static size_t ac_req_json_read_cb(char *ptr, size_t size, size_t nmemb, void *us
     struct JSON *json = data->parser;
 
     size_t chunksize = size * nmemb;
-
-    // NOTE: oldsize are the chars that were not succesfully read when parsing JSON
-    size_t oldsize = strlen(data->chunk);
-
 
     // This should never happen
     if (chunksize > API_CLIENT_MAX_RDATA) {
@@ -123,10 +188,6 @@ static size_t ac_req_xml_read_cb(char *ptr, size_t size, size_t nmemb, void *use
     struct PP *pp = data->parser;
 
     size_t chunksize = size * nmemb;
-
-    // NOTE: oldsize are the chars that were not succesfully read when parsing JSON
-    size_t oldsize = strlen(data->chunk);
-
 
     // This should never happen
     if (chunksize > API_CLIENT_MAX_RDATA) {
@@ -240,88 +301,6 @@ static void ac_subscripions_handle_data_cb(struct JSON *json, enum JSONEvent ev,
             strcpy(pod->url, ji->data);
             //DEBUG("Found xml: %s\n", ji->data); 
             data->npod++;
-        }
-    }
-}
-
-static int write_to_file(char *path, const char *mode, const char *fmt, ...)
-{
-    va_list ptr;
-    va_start(ptr, fmt);
-
-    int res = mkdir(dirname(path), 0755);
-    if (res < 0 && errno != EEXIST) {
-        ERROR("Failed to create dir\n");
-        perror(NULL);
-        return -1;
-    }
-    path[strlen(path)] = '/';
-
-    FILE *fp = fopen(path, mode);
-    if (fp == NULL) {
-        ERROR("Failed to open file for writing, %s\n", path);
-        return -1;
-    }
-    vfprintf(fp, fmt, ptr);
-    fclose(fp);
-
-    va_end(ptr);
-    return 0;
-}
-
-static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data)
-{
-    /* Callback is passed to json lib to handle incoming data.
-     * Data is saved in podcast struct */
-    struct PPItem *item = pp_stack_get_from_end(pp, 0);
-    struct APIUserData *data = user_data;
-    struct Episode *ep = data->data;
-
-    if (dtype == PP_DTYPE_TAG_OPEN && strcmp(item->data, "enclosure") == 0) {
-        for (int i=0 ; i<PP_XML_MAX_PARAM ; i++) {
-            if (strcmp(item->param[i].key, "url") == 0) {
-                strncpy(ep->url, item->param[i].value, PODCAST_MAX_URL);
-                DEBUG("Found url!\n");
-                break;
-            }
-        }
-    }
-    else if (dtype == PP_DTYPE_TAG_CLOSE && strcmp(item->data, "item") == 0) {
-        char path[256] = "";
-        sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
-        write_to_file(path, "a", EPISODE_JSON_FMT, ep->title, ep->guid, ep->url);
-        ep->url[0] = '\0';
-        ep->guid[0] = '\0';
-        ep->title[0] = '\0';
-    }
-    else if (dtype == PP_DTYPE_STRING || dtype == PP_DTYPE_CDATA) {
-        struct PPItem *item_tag = pp_stack_get_from_end(pp, 1);
-        struct PPItem *item_item = pp_stack_get_from_end(pp, 2);
-
-
-        if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "channel") == 0) {
-            if (strcmp(item_tag->data, "title") == 0) {
-                strcpy(ep->podcast->title, item->data);
-                //DEBUG("PODCAST TITLE: %s\n", item->data);
-                printf("   %s\n", item->data);
-
-
-                char path[256] = "";
-                sprintf(path, "%s/%s/%s.json", API_CLIENT_BASE_DIR, API_CLIENT_POD_DIR, ac_str_sanitize(ep->podcast->title));
-                write_to_file(path, "w", "[\n");
-            }
-        }
-
-        else if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "item") == 0) {
-
-            if (strcmp(item_tag->data, "title") == 0) {
-                strncpy(ep->title, item->data, PODCAST_MAX_TITLE);
-                printf("   - %s\n", item->data);
-            }
-            else if (strcmp(item_tag->data, "guid") == 0) {
-                strncpy(ep->guid, item->data, PODCAST_MAX_GUID);
-                //DEBUG("GUID:  %s\n", item->data);
-            }
         }
     }
 }

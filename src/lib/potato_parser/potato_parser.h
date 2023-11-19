@@ -95,6 +95,7 @@ struct PPPosition {
     size_t cur_chunk;   // index of current chunk
 };
 
+
 /* Datatype if PPItem and PPParserEntry */
 enum PPDtype {
     PP_DTYPE_UNKNOWN,
@@ -103,7 +104,16 @@ enum PPDtype {
     PP_DTYPE_TAG_OPEN,
     PP_DTYPE_TAG_CLOSE,
     PP_DTYPE_COMMENT,
-    PP_DTYPE_HEADER
+    PP_DTYPE_HEADER,
+
+    PP_DTYPE_OBJECT_OPEN,
+    PP_DTYPE_OBJECT_CLOSE,
+    PP_DTYPE_ARRAY_OPEN,
+    PP_DTYPE_ARRAY_CLOSE,
+    PP_DTYPE_KEY,
+    PP_DTYPE_VALUE,
+    PP_DTYPE_BOOL
+
 };
 
 // the stuff in the opening tag eg: <book category="bla">
@@ -134,6 +144,7 @@ struct PP;
 struct PPParserEntry {
     const char *start;
     const char *end;
+    const char *ignore_chars;
     enum PPDtype dtype;
 
     // callback handles sanity check, and adding/removing from stack
@@ -169,7 +180,7 @@ typedef void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data
 
 
 void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm);
+void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, const char *ignore_chars, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm);
 
 // helpers
 int str_ends_with(const char *str, const char *substr);
@@ -180,10 +191,10 @@ void pp_print_spaces(int n);
 void pp_stack_init(struct PPStack *stack);
 int pp_stack_put(struct PPStack *stack, struct PPItem ji);
 int pp_stack_pop(struct PPStack *stack);
-void pp_stack_debug(struct PPStack *stack);
 struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset);
 
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks);
+
 void pp_xml_stack_debug(struct PPStack *stack);
 
 #endif

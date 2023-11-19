@@ -19,9 +19,14 @@ void pp_xml_param_to_string(struct PPXMLParam *params, int max_amount, char *buf
     for (int i=0 ; i<max_amount ; i++, param++) {
         if (param->key == NULL || param->value == NULL || strlen(param->key) == 0)
             break;
-        char param_buf[256] = "";
-        sprintf(param_buf, "%s=%s, ", param->key, param->value);
-        strncat(buf, param_buf, max_buf);
+        strncat(buf, param->key, max_buf-1);
+        strncat(buf, " = ", max_buf-1);
+        strncat(buf, param->value, max_buf-1);
+        strncat(buf, ", ", max_buf-1);
+
+        //char param_buf[256] = "";
+        //snprintf(param_buf, 256, "%s=%s, ", param->key, param->value);
+        //strncat(buf, param_buf, max_buf-1);
     }
 }
 
@@ -147,24 +152,44 @@ static int pp_xml_item_parse_parameters(struct PPItem *item, char *str, size_t m
     /* Parse parameters into structs.
      * Return amount of parameters parsed or -1 on error */
     struct PPXMLParam *ptr = item->param;
-    char *rest;
+    char *rest = str;
     int i = 0;
 
     for (; i<max_amount ; i++, ptr++) {
-
-        if (pp_str_split_at_char(str, ' ', &rest) < 0)
+        // End of data
+        if (rest == NULL || strlen(rest) == 0)
             break;
 
-        if (pp_str_split_at_char(str, '=', &ptr->value) < 0) {
-            ERROR("Failed to parse parameter: %s\n", str);
+        char *value;
+
+        if (pp_str_split_at_char(rest, '=', &value) < 0) {
+            ERROR("Failed to parse parameter key, = not found: %s\n", rest);
+            break;
+        }
+
+        ptr->key = rest;
+
+        if (*value != '"') {
+            ERROR("Failed to parse parameter value, opening \" not found: %s\n", rest);
+            break;
+        }
+
+        // delete opening quote
+        value++;
+
+        if (pp_str_split_at_char(value, '"', &rest) < 0) {
+            ERROR("Failed to parse parameter value, closing \" not found: %s\n", rest);
             i = -1;
             break;
         }
-        ptr->key = str;
-        pp_xml_param_sanitize(ptr);
 
-        //DEBUG("Parameter: %s = %s\n", ptr->key, ptr->value);
-        str = rest;
+        ptr->value = value;
+
+        // remove space separator
+        if (rest != NULL && *rest == ' ')
+            rest++;
+
+        //DEBUG("Found parameter: %s = %s\n", ptr->key, ptr->value);
     }
     return i;
 }
@@ -225,12 +250,12 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     pp.user_data = NULL;
     pp.handle_data_cb = data_cb;
 
-    pp_add_parse_entry(&pp, PP_XML_CHAR_COMMENT_START,   PP_XML_CHAR_COMMENT_END,               PP_DTYPE_COMMENT,   NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_CDATA_START,     PP_XML_CHAR_CDATA_END,                 PP_DTYPE_CDATA,     NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_HEADER_START,    PP_XML_CHAR_HEADER_END,                PP_DTYPE_HEADER,    NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_CLOSE_START, PP_XML_CHAR_TAG_CLOSE_END,             PP_DTYPE_TAG_CLOSE, pp_xml_tag_close_cb, PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_OPEN_START,  PP_XML_CHAR_TAG_OPEN_END,              PP_DTYPE_TAG_OPEN,  pp_xml_tag_open_cb,  PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, "",                          "<",                                   PP_DTYPE_STRING,    pp_xml_string_cb,  PP_METHOD_NON_GREEDY);
+    pp_add_parse_entry(&pp, PP_XML_CHAR_COMMENT_START,   PP_XML_CHAR_COMMENT_END,   " \r\n\t", PP_DTYPE_COMMENT,   NULL,             PP_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_XML_CHAR_CDATA_START,     PP_XML_CHAR_CDATA_END,     " \r\n\t", PP_DTYPE_CDATA,     NULL,             PP_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_XML_CHAR_HEADER_START,    PP_XML_CHAR_HEADER_END,    " \r\n\t", PP_DTYPE_HEADER,    NULL,             PP_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_CLOSE_START, PP_XML_CHAR_TAG_CLOSE_END, " \r\n\t", PP_DTYPE_TAG_CLOSE, pp_xml_tag_close_cb, PP_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_OPEN_START,  PP_XML_CHAR_TAG_OPEN_END,  " \r\n\t", PP_DTYPE_TAG_OPEN,  pp_xml_tag_open_cb,  PP_METHOD_GREEDY);
+    pp_add_parse_entry(&pp, "",                          "<",                       " \r\n\t", PP_DTYPE_STRING,    pp_xml_string_cb,  PP_METHOD_NON_GREEDY);
 
     return pp;
 }

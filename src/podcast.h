@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "utils.h"
+//#include "utils.h"
 
 enum PodFields {
     POD_FIELD_PODCAST,
@@ -19,17 +19,6 @@ enum PodFields {
     POD_FIELD_POSITION,
     POD_FIELD_STARTED,
     POD_FIELD_TOTAL,
-};
-
-static const char *pod_fields[] = {
-    "podcast",
-    "episode",
-    "guid",
-    "action",
-    "timestamp",
-    "position",
-    "started",
-    "total"
 };
 
 enum PodActions {

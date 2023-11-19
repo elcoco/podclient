@@ -2,7 +2,7 @@ SRCDIR := src
 OBJDIR := obj
 
 PKGCONFIG = $(shell which pkg-config)
-CFLAGS := -g -Wall -Wno-unused-variable
+CFLAGS := -g -Wall -Wextra -Wshadow -Wundef
 #CFLAGS = -g -Wall -Wno-unused-variable $(shell $(PKGCONFIG) --cflags gtk4 --libs dbus-1 --libs libpulse)
 
 LIBS   := -lcurl

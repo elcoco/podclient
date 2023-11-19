@@ -1,6 +1,6 @@
 #include "json.h"
 
-#define DO_DEBUG 0
+#define DO_DEBUG 1
 #define DO_INFO  1
 #define DO_ERROR 1
 
@@ -453,6 +453,8 @@ size_t json_parse(struct JSON *json, char **chunks, size_t nchunks)
         // A pointer to start of string and the found char could be returned
         // So this function would become destructive
         // This should only be done if tmp != NULL
+        //
+        //stack_debug(json);
 
         enum JSONParseResult res;
         if ((res = fforward_skip_escaped(&pos, "\"[{1234567890-n.tf}]", NULL, NULL, "\n", tmp)) < JSON_PARSE_SUCCESS) {
