@@ -13,15 +13,12 @@ extern int do_debug;
 extern int do_info;
 extern int do_error;
 
-#define PP_JSON_CHAR_OBJECT_START "{"
-#define PP_JSON_CHAR_OBJECT_END   "}"
-#define PP_JSON_CHAR_ARRAY_START  "["
-#define PP_JSON_CHAR_ARRAY_END    "]"
-#define PP_JSON_CHAR_STRING_START "\""
-#define PP_JSON_CHAR_STRING_END   "\""
-#define PP_JSON_CHAR_STRING2_START "'"
-#define PP_JSON_CHAR_STRING2_END   "'"
-#define PP_JSON_CHAR_VALUE         ":"
+#define PP_JSON_OBJECT_OPEN "{"
+#define PP_JSON_OBJECT_CLOSE   "}"
+#define PP_JSON_ARRAY_OPEN  "["
+#define PP_JSON_ARRAY_CLOSE    "]"
+#define PP_JSON_STRING_OPEN "\""
+#define PP_JSON_STRING_CLOSE   "\""
 
 
 struct PP pp_json_init(handle_data_cb data_cb);

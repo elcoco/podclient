@@ -29,7 +29,7 @@
 // And can be cropped depending on XML_MAX_DATA.
 #define PP_MAX_PARSE_BUFFER 1024
 
-#define PP_MAX_PARSER_ENTRIES  8
+#define PP_MAX_PARSER_ENTRIES  16
 
 // Parameters are an XML thing
 #define PP_XML_MAX_PARAM         16
@@ -111,9 +111,16 @@ enum PPDtype {
     PP_DTYPE_ARRAY_OPEN,
     PP_DTYPE_ARRAY_CLOSE,
     PP_DTYPE_KEY,
-    PP_DTYPE_VALUE,
+    PP_DTYPE_NUMBER,
     PP_DTYPE_BOOL
+};
 
+enum PPMatchType {
+    PP_MATCH_UNKNOWN,
+    PP_MATCH_START,
+    PP_MATCH_END,
+    PP_MATCH_START_END,
+    PP_MATCH_ANY
 };
 
 // the stuff in the opening tag eg: <book category="bla">
@@ -142,15 +149,22 @@ struct PP;
 
 /* Defines a parser term that will eventually create a PPItem */
 struct PPParserEntry {
+    enum PPMatchType match_type;
     const char *start;
     const char *end;
+    const char *any;
     const char *ignore_chars;
+
     enum PPDtype dtype;
 
     // callback handles sanity check, and adding/removing from stack
     enum PPParseResult(*cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
 
+    // include start/end strings in result
     enum PPParseMethod greedy;
+
+    // set over last char
+    int step_over;
 };
 
 struct PP {
@@ -180,7 +194,7 @@ typedef void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data
 
 
 void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-void pp_add_parse_entry(struct PP *pp, const char *start, const char *end, const char *ignore_chars, enum PPDtype dtype, entry_cb cb, enum PPParseMethod pm);
+void pp_add_parse_entry(struct PP *pp, struct PPParserEntry pe);
 
 // helpers
 int str_ends_with(const char *str, const char *substr);
@@ -196,5 +210,6 @@ struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset);
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks);
 
 void pp_xml_stack_debug(struct PPStack *stack);
+struct PPParserEntry pp_entry_init();
 
 #endif

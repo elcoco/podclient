@@ -3,10 +3,10 @@
     "_id": "6223c8d1eabf1ff871c83dbb",
     "index": 0,
     "guid": "bcab7ab1-3cde-4dbc-ac31-450bfdc08e38",
-    "isActive": true,
+    "isActive": false,
     "balance": "$1,000.47",
     "picture": "http://placehold.it/32x32",
-    "age": 29,
+    "age": "29",
     "eyeColor": "green",
     "name": "Brandy Gilmore",
     "gender": "female",
@@ -14,10 +14,9 @@
     "email": "brandygilmore@unisure.com",
     "phone": "+1 (946) 485-2127",
     "address": "153 George Street, Omar, Hawaii, 2642",
-    "about": "Lorem voluptate voluptate eu id laborum ut minim aute amet ad sint ipsum aute enim. Deserunt dolore Lorem et incididunt eu et veniam cupidatat labore pariatur anim pariatur reprehenderit. Incididunt id ullamco sint anim veniam. Exercitation irure veniam quis Lorem consectetur excepteur ex irure commodo. Pariatur et incididunt voluptate magna ipsum aliquip occaecat elit magna mollit reprehenderit magna eu mollit. Excepteur aute proident laboris pariatur. Ea anim commodo magna commodo officia fugiat qui aute excepteur ea.\r\n",
     "registered": "2017-09-15T11:05:58 -00:00",
-    "latitude": -78.998224,
-    "longitude": -11.253364,
+    "latitude": "-78.998224",
+    "longitude": "-11.253364",
     "tags": [
       "id",
       "et",
@@ -29,15 +28,15 @@
     ],
     "friends": [
       {
-        "id": 0,
+        "id": "0",
         "name": "Cain Fry"
       },
       {
-        "id": 1,
+        "id": "1",
         "name": "Shelia Monroe"
       },
       {
-        "id": 2,
+        "id": "2",
         "name": "Combs May"
       }
     ],
@@ -46,9 +45,9 @@
   },
   {
     "_id": "6223c8d17d8eac70a1419e1c",
-    "index": 1,
+    "index": "1",
     "guid": "c501e505-5603-42e0-b91a-37d5ee39dfbc",
-    "isActive": false,
+    "isActive": true,
     "balance": "$3,893.71",
     "picture": "http://placehold.it/32x32",
     "age": 21,

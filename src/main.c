@@ -181,11 +181,13 @@ static void test_pp_xml()
 }
 */
 
+
 static int do_download_episodes(struct State *s)
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const int nchunks = 256;
-    const char *path = "test/podcasts/trash_taste_podcast.json";
+    const char *path = "data/test.json";
+    //const char *path = "test/podcasts/trash_taste_podcast.json";
     FILE *fp;
     size_t n;
     char chunk[nchunks+1];

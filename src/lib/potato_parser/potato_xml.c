@@ -239,7 +239,6 @@ enum PPParseResult pp_xml_tag_open_cb(struct PP *pp, struct PPParserEntry *pe, s
 
 struct PP pp_xml_init(handle_data_cb data_cb)
 {
-    
     struct PP pp;
     pp_stack_init(&(pp.stack));
 
@@ -250,13 +249,72 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     pp.user_data = NULL;
     pp.handle_data_cb = data_cb;
 
-    pp_add_parse_entry(&pp, PP_XML_CHAR_COMMENT_START,   PP_XML_CHAR_COMMENT_END,   " \r\n\t", PP_DTYPE_COMMENT,   NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_CDATA_START,     PP_XML_CHAR_CDATA_END,     " \r\n\t", PP_DTYPE_CDATA,     NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_HEADER_START,    PP_XML_CHAR_HEADER_END,    " \r\n\t", PP_DTYPE_HEADER,    NULL,             PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_CLOSE_START, PP_XML_CHAR_TAG_CLOSE_END, " \r\n\t", PP_DTYPE_TAG_CLOSE, pp_xml_tag_close_cb, PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, PP_XML_CHAR_TAG_OPEN_START,  PP_XML_CHAR_TAG_OPEN_END,  " \r\n\t", PP_DTYPE_TAG_OPEN,  pp_xml_tag_open_cb,  PP_METHOD_GREEDY);
-    pp_add_parse_entry(&pp, "",                          "<",                       " \r\n\t", PP_DTYPE_STRING,    pp_xml_string_cb,  PP_METHOD_NON_GREEDY);
+    struct PPParserEntry pe_comment = pp_entry_init();
+    struct PPParserEntry pe_cdata = pp_entry_init();
+    struct PPParserEntry pe_header = pp_entry_init();
+    struct PPParserEntry pe_tag_close = pp_entry_init();
+    struct PPParserEntry pe_tag_open = pp_entry_init();
+    struct PPParserEntry pe_string = pp_entry_init();
 
+    pe_comment.start          = PP_XML_CHAR_COMMENT_START;
+    pe_comment.end            = PP_XML_CHAR_COMMENT_END;
+    pe_comment.ignore_chars   = " \r\n\t";
+    pe_comment.dtype          = PP_DTYPE_COMMENT;
+    pe_comment.match_type     = PP_MATCH_START_END;
+    pe_comment.greedy         = PP_METHOD_NON_GREEDY;
+    pe_comment.cb             = NULL;
+    pe_comment.step_over      = 1;
+
+    pe_cdata.start            = PP_XML_CHAR_CDATA_START;
+    pe_cdata.end              = PP_XML_CHAR_CDATA_END;
+    pe_cdata.ignore_chars     = " \r\n\t";
+    pe_cdata.match_type       = PP_MATCH_START_END;
+    pe_cdata.dtype            = PP_DTYPE_CDATA;
+    pe_cdata.greedy           = PP_METHOD_NON_GREEDY;
+    pe_cdata.cb               = NULL;
+    pe_cdata.step_over        = 1;
+
+    pe_header.start           = PP_XML_CHAR_HEADER_START;
+    pe_header.end             = PP_XML_CHAR_HEADER_END;
+    pe_header.ignore_chars    = " \r\n\t";
+    pe_header.match_type      = PP_MATCH_START_END;
+    pe_header.dtype           = PP_DTYPE_HEADER;
+    pe_header.greedy          = PP_METHOD_NON_GREEDY;
+    pe_header.cb              = NULL;
+    pe_header.step_over       = 1;
+
+    pe_tag_close.start        = PP_XML_CHAR_TAG_CLOSE_START;
+    pe_tag_close.end          = PP_XML_CHAR_TAG_CLOSE_END;
+    pe_tag_close.ignore_chars = " \r\n\t";
+    pe_tag_close.match_type   = PP_MATCH_START_END;
+    pe_tag_close.dtype        = PP_DTYPE_TAG_CLOSE;
+    pe_tag_close.greedy       = PP_METHOD_NON_GREEDY;
+    pe_tag_close.cb           = pp_xml_tag_close_cb;
+    pe_tag_close.step_over    = 1;
+
+    pe_tag_open.start         = PP_XML_CHAR_TAG_OPEN_START;
+    pe_tag_open.end           = PP_XML_CHAR_TAG_OPEN_END;
+    pe_tag_open.ignore_chars  = " \r\n\t";
+    pe_tag_open.match_type    = PP_MATCH_START_END;
+    pe_tag_open.dtype         = PP_DTYPE_TAG_OPEN;
+    pe_tag_open.greedy        = PP_METHOD_NON_GREEDY;
+    pe_tag_open.cb            = pp_xml_tag_open_cb;
+    pe_tag_open.step_over     = 1;
+
+    pe_string.start         = "";
+    pe_string.end             = "<";
+    pe_string.ignore_chars    = " \r\n\t";
+    pe_string.match_type      = PP_MATCH_START_END;
+    pe_string.dtype           = PP_DTYPE_STRING;
+    pe_string.greedy          = PP_METHOD_NON_GREEDY;
+    pe_string.cb              = pp_xml_string_cb;
+    pe_string.step_over       = 0;
+
+    pp_add_parse_entry(&pp, pe_comment);
+    pp_add_parse_entry(&pp, pe_cdata);
+    pp_add_parse_entry(&pp, pe_header);
+    pp_add_parse_entry(&pp, pe_tag_close);
+    pp_add_parse_entry(&pp, pe_tag_open);
+    pp_add_parse_entry(&pp, pe_string);
     return pp;
 }
-
