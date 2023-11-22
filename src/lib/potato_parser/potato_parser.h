@@ -136,18 +136,14 @@ struct PPSearchState {
 };
 
 enum PPParserState {
-    PSTATE_BOOT,
+    PSTATE_UNDEFINED,
     PSTATE_FIND_START,
     PSTATE_FIND_END,
     PSTATE_FIND_DELIM,
 
-    PSTATE_PARSE_START,
-    PSTATE_PARSE_END,
-    PSTATE_PARSE_STRING,
-
-    PSTATE_FINISHED_SUCCESS,
-    PSTATE_END_OF_DATA,
-    PSTATE_TRIGGERED_END_OF_DATA,
+    PSTATE_ACCEPT,
+    PSTATE_REJECT_EOD,
+    PSTATE_REJECT_EOD_TRIGG,
 };
 
 struct PPPosition {
@@ -174,7 +170,8 @@ struct PPToken {
 
     const char *start;              // start search at this string
     const char *end;                // end search at this string
-                                    
+    const char *ignore_chars;       // tell search to ignore these chars and save all others to buffer
+    const char *error_chars;        // error when any of these chars are encountered
     const char *any;                // save any of these chars to buffer
 
     const char *delim_chars;        // stop searching when one of these chars is found
@@ -185,8 +182,6 @@ struct PPToken {
     const char *capt_start_str;     // capture between delimiters
     const char *capt_end_str;
 
-    const char *ignore_chars;       // tell search to ignore these chars and save all others to buffer
-    const char *error_chars;        // error when any of these chars are encountered
 
 
     enum PPDtype dtype;
@@ -197,7 +192,7 @@ struct PPToken {
     // include start/end strings in result
     enum PPParseMethod greedy;
 
-    // set over last char
+    // Step over last char
     int step_over;
 
     // Below should possibly be stored in a struct that is cast to *void
