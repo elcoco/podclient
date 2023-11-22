@@ -102,23 +102,6 @@ static void pp_pos_debug(struct PPPosition *pos)
 
 }
 
-void pp_token_set_skip_data(struct PPToken *t, const char *src, size_t dest_size)
-{
-    if (strlen(src) >= t->skip_data-1) {
-        int offset = strlen(src) - dest_size + 2;
-        strncpy(t->skip_data, src+offset, dest_size);
-    }
-    else {
-        strncpy(t->skip_data, src, dest_size);
-    }
-
-    INFO("\n*****************************************************************\n");
-    INFO("Found data:     [%ld]: '%s'\n", strlen(src), src);
-    INFO("Found skip data [%ld]: '%s'\n", strlen(t->skip_data), t->skip_data);
-    INFO("*****************************************************************\n\n");
-
-}
-
 static int pp_strstr_nth(const char *haystack, const char *needle, int nth)
 {
     int count = 0;
@@ -149,9 +132,9 @@ static int pp_search_char(const char **bufs, size_t length, char c)
     return -1;
 }
 
-static void pp_add_to_buf(char *buf, size_t len, char c)
+static void pp_add_to_buf(char *buf, int len, char c)
 {
-    if (strlen(buf) == len-1) {
+    if (strlen(buf) >= len-1) {
         // shift string one place to the left
         char *lptr = buf;
         char *rptr = buf+1;
@@ -160,7 +143,7 @@ static void pp_add_to_buf(char *buf, size_t len, char c)
 
         // add char
         *lptr = c;
-        *(lptr+1) = '\0';
+        //*(lptr+1) = '\0';
     }
     else {
         buf[strlen(buf)] = c;
@@ -322,7 +305,7 @@ static enum PPSearchResult pp_token_search_bak(struct PPToken *t, struct PPPosit
 }
 */
 
-static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition *pos, size_t buf_size, enum PPParserState s)
+static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition *pos, size_t buf_size, enum PPParserState s, int reuse_skip_data)
 {
     const char *start   = t->capt_start_str;
     const char *end     = t->capt_end_str;
@@ -345,6 +328,17 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
 
     // Scrolling buffer to find strings in
     char search_buf[PP_MAX_SEARCH_BUF] = "";
+
+    assert(PP_MAX_SEARCH_BUF >= PP_MAX_SKIP_DATA);
+
+    if (reuse_skip_data) {
+        strncpy(search_buf, t->skip_data, PP_MAX_SEARCH_BUF);
+        //INFO("REUSING SKIP DATA, SEARCH_BUF: '%s'\n", search_buf);
+    }
+    else {
+        memset(t->skip_data, 0, PP_MAX_SKIP_DATA);
+    }
+
     char *psave = t->data;
 
     int save_count = 0;
@@ -352,12 +346,11 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
     int buffer_overflow = 0;
 
     //t->skip_data[0] = '\0';
-    memset(t->skip_data, 0, PP_MAX_SKIP_DATA);
 
     while (s != PSTATE_END_OF_DATA && s != PSTATE_TRIGGERED_END_OF_DATA && s != PSTATE_FINISHED_SUCCESS) {
 
         if (first--<= 0 && pp_pos_next(pos) < 0) {
-            DEBUG("CUR CHAR: '%c'\n", *pos->c);
+            //DEBUG("CUR CHAR: '%c'\n", *pos->c);
 
             if (triggered)
                 s = PSTATE_TRIGGERED_END_OF_DATA;
@@ -395,7 +388,7 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                 break;
 
             case PSTATE_FIND_END:
-                DEBUG("STATE: FIND_END: '%s'\n", end);
+                //DEBUG("STATE: FIND_END: '%s'\n", end);
                 //INFO("BEFORE ADDING TO BUF: '%s'\n", t->skip_data);
                 pp_add_to_buf(search_buf, PP_MAX_SEARCH_BUF, *pos->c);
 
@@ -486,14 +479,17 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                 assert(!"INVALID STATE: save\n");
         }
     }
-    //INFO("SKIP DATA ==> '%s'\n", t->skip_data);
+
+    // t.skip_data, we don't need this data
+    //if (!buffer_overflow && s != PSTATE_TRIGGERED_END_OF_DATA && s != PSTATE_END_OF_DATA)
+    //    memset(t->skip_data, 0, PP_MAX_SKIP_DATA);
 
     if (s == PSTATE_END_OF_DATA) {
         DEBUG("EXIT: END OF DATA\n");
         return PP_SEARCH_RESULT_END_OF_DATA;
     }
     else if (s == PSTATE_TRIGGERED_END_OF_DATA) {
-        INFO("EXIT: TRIGGERED END OF DATA\n");
+        //INFO("EXIT: TRIGGERED END OF DATA\n");
         return PP_SEARCH_RESULT_END_OF_DATA_TRIGGERED;
     }
 
@@ -509,17 +505,20 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
     if (t->step_over)
         pp_pos_next(pos);
 
-    if (buffer_overflow) {
-        DEBUG("******************************************\n");
-        DEBUG("END SEARCH: '%s'\n", t->data);
-        DEBUG("SKIP_BUF: '%s'\n", t->skip_data);
-        DEBUG("CUR_CHR: '%c'\n", *pos->c);
-        DEBUG("******************************************\n");
-    }
-    else {
-        DEBUG("END SEARCH: '%s'\n", t->data);
-    }
 
+    //if (buffer_overflow) {
+    //    DEBUG("******************************************\n");
+    //    DEBUG("END SEARCH: '%s'\n", t->data);
+    //    DEBUG("SKIP_BUF: '%s'\n", t->skip_data);
+    //    DEBUG("CUR_CHR: '%c'\n", *pos->c);
+    //    DEBUG("******************************************\n");
+    //}
+    //else {
+    //    DEBUG("END SEARCH: '%s'\n", t->data);
+    //}
+    assert(strcmp(t->data, "<BLOCK>") != 0);
+
+    DEBUG("END SEARCH: '%s'\n", t->data);
     DEBUG("CUR CHAR: %c\n", *pos->c);
     //assert(strcmp(t->data, ">") != 0);
     return PP_SEARCH_RESULT_SUCCESS;
@@ -1046,7 +1045,7 @@ enum PPParseResult pp_parse_token(struct PP *pp, struct PPPosition *pos_cpy, str
     // when just a couple of allowed chars are found.
     // So in case of a buffer overflow, a search will be set for a token that shouldn't trigger
     // in the first place
-    enum PPSearchResult res_end = pp_token_search(t, &pp->pos, PP_MAX_TOKEN_DATA, PSTATE_BOOT);
+    enum PPSearchResult res_end = pp_token_search(t, &pp->pos, PP_MAX_TOKEN_DATA, PSTATE_BOOT, 0);
 
     if (res_end == PP_SEARCH_RESULT_SYNTAX_ERROR)
         return PP_PARSE_RESULT_NO_MATCH;
@@ -1139,17 +1138,19 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
         // FIX: copy found data to struct and check it
         if (pp->t_skip.capt_end_str) {
             INFO("[%d] Skip to: '%s'\n", pp->zero_rd_cnt, pp->t_skip.capt_end_str);
-            res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_END);
+            res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_END, 1);
         }
         else if (pp->t_skip.delim_chars) {
             INFO("[%d] Skip to: '%s'\n", pp->zero_rd_cnt, pp->t_skip.delim_chars);
-            res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_DELIM);
+            res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_DELIM, 1);
         }
         else {
             DEBUG("end: %s, delim: %s\n", pp->t_skip.end, pp->t_skip.delim_chars);
             assert(!"Don't know where to skip to!\n");
         }
 
+        // gotta save the skip string for next pass so we can insert it in the search buffer
+        // when calling pp_token_search()
 
 
 
@@ -1173,6 +1174,7 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
                 pp_stack_pop(&(pp->stack));
             }
             //pp->t_skip.skip_data[0] = '\0';
+            memset(pp->t_skip.skip_data, 0, PP_MAX_SKIP_DATA);
 
             pp->t_skip_is_set = 0;
             pp->zero_rd_cnt = 0;

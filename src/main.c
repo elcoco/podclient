@@ -128,7 +128,8 @@ static int parse_args(struct State *s, int argc, char **argv)
 static void test_pp_xml()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
-    const char *path = "data/test.xml";
+    const char *path = "data/bpradio.rss";
+    //const char *path = "data/test.xml";
     //const char *path = "data/test2.xml";
 
     // BUG: if TAG_OPEN overflows or falls inbetween passes, and it is single line, it will not close
@@ -251,7 +252,7 @@ int do_sync_episodes(struct State *s)
     strncpy(client.user, s->user, API_CLIENT_MAX_USER);
     strncpy(client.key, s->key, API_CLIENT_MAX_KEY);
     client.port = s->port;
-    client.timeout = 40L;
+    client.timeout = 100L;
 
     if (strlen(s->podcast) > 0) {
         struct Podcast pod;

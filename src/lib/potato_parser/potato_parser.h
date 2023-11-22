@@ -12,7 +12,7 @@
 //      Super corner case but this actually did happen once with the RSS tag!
 // Max data length that can be in a XMLItem to hold data like: strings, numbers or bool
 // If too small, strings will be cut off. Streams will not become corrupted.
-#define PP_MAX_TOKEN_DATA 256
+#define PP_MAX_TOKEN_DATA 32
 
 // The stack holds XMLItems and represents the path from root to the currently parsed item
 // eg: {object, key, array, string}
@@ -27,7 +27,7 @@
 // and the data will be ignored.
 // While parsing the contents of this buffer are copied to XMLItem.data
 // And can be cropped depending on XML_MAX_DATA.
-#define PP_MAX_PARSE_BUFFER 256
+#define PP_MAX_PARSE_BUFFER 64
 
 #define PP_MAX_SKIP_DATA 32
 
@@ -203,6 +203,11 @@ struct PPToken {
     // Below should possibly be stored in a struct that is cast to *void
     // holds the data for the token
     char data[PP_MAX_TOKEN_DATA];
+
+    // something that writes to data is overwriting skip_data
+    // fix this and remove bever
+    int bever;
+
     char skip_data[PP_MAX_SKIP_DATA];
 
     // parameters are usefull for xml
