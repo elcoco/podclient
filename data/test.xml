@@ -1,4 +1,5 @@
-<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:anchor="https://anchor.fm/xmlns">
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:anchor="https://anchor.fm/xmlns">
 	<channel>
 		<title><![CDATA[The Official Podcast]]></title>
 		<description><![CDATA[The Official Podcast is where four international man friends congregate to discuss just about everything. Featuring dumb questions, YouTube celebrities, childish giggling, burger puns, more dumb questions, fatherly advice, bad dating stories, even more dumb questions, and a slew of guest stars, The Official Podcast is a weekly show with a little something for everyone. Jackson, Andrew, Charlie, and Kaya gather to talk about only the most important things in life every Thursday.]]></description>
@@ -9,7 +10,7 @@
 			<link>https://cms.megaphone.fm/channel/TOP7784625980</link>
 		</image>
 		<generator>Anchor Podcasts</generator>
-		<lastBuildDate>Thu, 02 Nov 2023 18:04:49 GMT</lastBuildDate>
+	,	<lastBuildDate>Thu, 02 Nov 2023 18:04:49 GMT</lastBuildDate>
 		<atom:link href="https://anchor.fm/s/23c4a914/podcast/rss" rel="self" type="application/rss+xml"/>
 		<author><![CDATA[The Official Podcast]]></author>
 		<copyright><![CDATA[The Official Podcast]]></copyright>

@@ -6,13 +6,13 @@
 #include <string.h>
 #include <assert.h>
 
-// NOTE If PP_MAX_DATA is too small, the tag is cut off when putting the data in a PPItem.
+// NOTE If PP_MAX_TOKEN_DATA is too small, the tag is cut off when putting the data in a PPItem.
 //      this MAY cause the string to split on '/', which with XML indicates that the tag should be closed.
 //      This will trigger an error later when the actual closing tag appears.
 //      Super corner case but this actually did happen once with the RSS tag!
 // Max data length that can be in a XMLItem to hold data like: strings, numbers or bool
 // If too small, strings will be cut off. Streams will not become corrupted.
-#define PP_MAX_DATA 512
+#define PP_MAX_TOKEN_DATA 256
 
 // The stack holds XMLItems and represents the path from root to the currently parsed item
 // eg: {object, key, array, string}
@@ -27,9 +27,20 @@
 // and the data will be ignored.
 // While parsing the contents of this buffer are copied to XMLItem.data
 // And can be cropped depending on XML_MAX_DATA.
-#define PP_MAX_PARSE_BUFFER 1024
+#define PP_MAX_PARSE_BUFFER 256
 
-#define PP_MAX_PARSER_ENTRIES  16
+#define PP_MAX_SKIP_DATA 32
+
+// When we search for a tag that is larger than the parse buffer, we will set the PP.t_skip token.
+// This will force the parser to look for a specific end string on every pass until it is found.
+// When found, a token of the correct type will be added to the stack. Data will be set to PP_BUFFER_OVERFLOW_PLACEHOLDER
+// CORNER CASE:
+// A tag can end up being split on two passes. We will never find it. This will occure a lot when using small buffers
+// By reporting back PP->pos.npos-PP_N_SKIP_CHARS chars back to the caller we will receive PP_N_SKIP_CHARS
+// back on the next pass. This will give us the chance to still find it
+#define PP_N_SKIP_CHARS 5
+
+#define PP_MAX_PARSER_TOKENS  16
 
 // Parameters are an XML thing
 #define PP_XML_MAX_PARAM         16
@@ -52,7 +63,7 @@
 // How many chars to look behind/ahead the error in the parse string when displaying
 // the error message.
 // Current limitation is that it only looks in current chunk.
-#define PP_ERR_CHARS_CONTEXT 50
+#define PP_ERR_CHARS_CONTEXT 100
 #define XRESET   "\x1B[0m"
 #define XRED     "\x1B[31m"
 #define XGREEN   "\x1B[32m"
@@ -70,6 +81,7 @@ extern int do_error;
 enum PPSearchResult {
     PP_SEARCH_RESULT_SYNTAX_ERROR,       // eg. an unexpected tag. closing a tag that wasn't previously opened
     PP_SEARCH_RESULT_END_OF_DATA,          // end of data (position), didn't find result in data
+    PP_SEARCH_RESULT_END_OF_DATA_TRIGGERED, // end of data (position), did find start string or a char we're looking for
     PP_SEARCH_RESULT_SUCCESS
 };
 
@@ -80,23 +92,13 @@ enum PPParseResult {
     PP_PARSE_RESULT_SUCCESS
 };
 
-/* Consume PPParserEntry.end char or not? */
+/* Include start/end string in result */
 enum PPParseMethod {
     PP_METHOD_NON_GREEDY,
     PP_METHOD_GREEDY
 };
 
-struct PPPosition {
-    int npos;           // char counter
-    char *c;            // pointer to current char in chunk
-    int length;         // length of current chunk
-    char **chunks;
-    size_t max_chunks;
-    size_t cur_chunk;   // index of current chunk
-};
-
-
-/* Datatype if PPItem and PPParserEntry */
+/* Datatype if PPItem and PPToken */
 enum PPDtype {
     PP_DTYPE_UNKNOWN,
     PP_DTYPE_STRING,
@@ -105,7 +107,6 @@ enum PPDtype {
     PP_DTYPE_TAG_CLOSE,
     PP_DTYPE_COMMENT,
     PP_DTYPE_HEADER,
-
     PP_DTYPE_OBJECT_OPEN,
     PP_DTYPE_OBJECT_CLOSE,
     PP_DTYPE_ARRAY_OPEN,
@@ -123,78 +124,125 @@ enum PPMatchType {
     PP_MATCH_ANY
 };
 
-// the stuff in the opening tag eg: <book category="bla">
-// TODO, not implemented yet
+// Struct used internally by pp_token_search()
+struct PPSearchState {
+    int triggered;
+
+    int save_enabled;
+    int save_count;
+    char search_buf[PP_MAX_SEARCH_BUF];
+
+    int start_found;
+};
+
+enum PPParserState {
+    PSTATE_BOOT,
+    PSTATE_FIND_START,
+    PSTATE_FIND_END,
+    PSTATE_FIND_DELIM,
+
+    PSTATE_PARSE_START,
+    PSTATE_PARSE_END,
+    PSTATE_PARSE_STRING,
+
+    PSTATE_FINISHED_SUCCESS,
+    PSTATE_END_OF_DATA,
+    PSTATE_TRIGGERED_END_OF_DATA,
+};
+
+struct PPPosition {
+    int npos;           // char counter
+    char *c;            // pointer to current char in chunk
+    int length;         // length of current chunk
+    char **chunks;
+    size_t max_chunks;
+    size_t cur_chunk;   // index of current chunk
+};
+
+// XML specific. The stuff in the opening tag eg: <book category="bla">
 struct PPXMLParam {
     char *key;
     char *value;
-
-    //char key[PP_XML_MAX_PARAM_KEY];
-    //char value[PP_XML_MAX_PARAM_VALUE];
-};
-
-/* Holds the actual data, eg: tag, string, object etc... */
-struct PPItem {
-    enum PPDtype dtype;
-    char data[PP_MAX_DATA];
-    struct PPXMLParam param[PP_XML_MAX_PARAM];
-};
-
-struct PPStack {
-    struct PPItem stack[PP_MAX_STACK];
-    int pos;
 };
 
 struct PP;
 
-/* Defines a parser term that will eventually create a PPItem */
-struct PPParserEntry {
+/* Defines how a bunch of chars should be parsed into a token.
+ * It also holds the actual data */
+struct PPToken {
     enum PPMatchType match_type;
-    const char *start;
-    const char *end;
-    const char *any;
-    const char *ignore_chars;
+
+    const char *start;              // start search at this string
+    const char *end;                // end search at this string
+                                    
+    const char *any;                // save any of these chars to buffer
+
+    const char *delim_chars;        // stop searching when one of these chars is found
+    const char *allow_chars;        // allow these chars
+    const char *illegal_chars;     // error on any of these chars. error on none if NULL
+    const char *save_chars;         // save any of these chars. Save all if NULL
+                                    //
+    const char *capt_start_str;     // capture between delimiters
+    const char *capt_end_str;
+
+    const char *ignore_chars;       // tell search to ignore these chars and save all others to buffer
+    const char *error_chars;        // error when any of these chars are encountered
+
 
     enum PPDtype dtype;
 
     // callback handles sanity check, and adding/removing from stack
-    enum PPParseResult(*cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
+    enum PPParseResult(*cb)(struct PP *pp, struct PPToken *t);
 
     // include start/end strings in result
     enum PPParseMethod greedy;
 
     // set over last char
     int step_over;
+
+    // Below should possibly be stored in a struct that is cast to *void
+    // holds the data for the token
+    char data[PP_MAX_TOKEN_DATA];
+    char skip_data[PP_MAX_SKIP_DATA];
+
+    // parameters are usefull for xml
+    struct PPXMLParam param[PP_XML_MAX_PARAM];
 };
+
+struct PPStack {
+    struct PPToken stack[PP_MAX_STACK];
+    int pos;
+};
+
 
 struct PP {
     struct PPPosition pos;
     struct PPStack stack;
-    struct PPParserEntry entries[PP_MAX_PARSER_ENTRIES];
+    struct PPToken tokens[PP_MAX_PARSER_TOKENS];
 
     void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data);
     void *user_data;
 
-    int max_entries;
+    int max_tokens;
 
-    // When a bufferoverflow occurs, instead of creating a larger buffer we save the entry
+    // When a bufferoverflow occurs, instead of creating a larger buffer we save the token
     // that defines to which string we should skip.
     // Then keep on looking for this string and add a placeholder PPItem to the stack
     // It is a potato parser after all ;)
-    struct PPParserEntry skip;
+    struct PPToken t_skip;
     // indicate that kip has an intentional value
-    unsigned char skip_is_set;
-    // How many times we returned zero chars parsed, this indicates wether we should look for the above skip PPParserEntry
+    unsigned char t_skip_is_set;
+    // How many times we returned zero chars parsed, this indicates wether we should look for the above t_skip PPToken
     int zero_rd_cnt;
 };
 
 // Callbacks
-typedef enum PPParseResult(*entry_cb)(struct PP *pp, struct PPParserEntry *pe, struct PPItem *item);
+//typedef enum PPParseResult(*token_cb)(struct PP *pp, struct PPToken *t);
 typedef void(*handle_data_cb)(struct PP *pp, enum PPDtype dtype, void *user_data);
 
 
 void pp_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *user_data);
-void pp_add_parse_entry(struct PP *pp, struct PPParserEntry pe);
+void pp_add_parse_token(struct PP *pp, struct PPToken pe);
 
 // helpers
 int str_ends_with(const char *str, const char *substr);
@@ -203,13 +251,13 @@ void pp_print_spaces(int n);
 
 
 void pp_stack_init(struct PPStack *stack);
-int pp_stack_put(struct PPStack *stack, struct PPItem ji);
+int pp_stack_put(struct PPStack *stack, struct PPToken ji);
 int pp_stack_pop(struct PPStack *stack);
-struct PPItem* pp_stack_get_from_end(struct PP *pp, int offset);
+struct PPToken* pp_stack_get_from_end(struct PP *pp, int offset);
 
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks);
 
 void pp_xml_stack_debug(struct PPStack *stack);
-struct PPParserEntry pp_entry_init();
+struct PPToken pp_token_init();
 
 #endif

@@ -125,12 +125,15 @@ static int parse_args(struct State *s, int argc, char **argv)
     return SUCCESS;
 }
 
-/*
 static void test_pp_xml()
 {
     // FIXME sometimes nread (returned from json_parse())is less than what is actually parsed
     const char *path = "data/test.xml";
-    const int nchunks = 1000;
+    //const char *path = "data/test2.xml";
+
+    // BUG: if TAG_OPEN overflows or falls inbetween passes, and it is single line, it will not close
+    const int nchunks = 256;
+
     FILE *fp;
     size_t n;
     struct PP pp;
@@ -139,6 +142,7 @@ static void test_pp_xml()
     chunk[0] = '\0';
     chunk_unread[0] = '\0';
     char *chunks[2];
+    
 
     pp = pp_xml_init(pp_xml_handle_data_cb);
 
@@ -179,7 +183,6 @@ static void test_pp_xml()
 
     fclose(fp);
 }
-*/
 
 
 static int do_download_episodes(struct State *s)
@@ -248,7 +251,7 @@ int do_sync_episodes(struct State *s)
     strncpy(client.user, s->user, API_CLIENT_MAX_USER);
     strncpy(client.key, s->key, API_CLIENT_MAX_KEY);
     client.port = s->port;
-    client.timeout = 20L;
+    client.timeout = 40L;
 
     if (strlen(s->podcast) > 0) {
         struct Podcast pod;
@@ -268,7 +271,7 @@ int do_sync_episodes(struct State *s)
         for (int i=0 ; i<pods_found ; i++) {
             printf("\n** %s\n", pods[i].url);
             if (get_episodes(&client, &pods[i]) == API_CLIENT_REQ_PARSE_ERROR) {
-                DEBUG("Fail on: %s\n", pods[i].url);
+                ERROR("Fail on: %s\n", pods[i].url);
                 return -1;
             }
         }
@@ -286,14 +289,16 @@ int main(int argc, char **argv)
     //test_json();
     //return 0;
     //
-    //test_pp_xml();
-    //return 0;
     
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {
         show_help(&s);
         return 0;
     }
+
+    //test_pp_xml();
+    //return 0;
+
     if (s.do_sync) {
         if (do_sync_episodes(&s) < 0)
             return 1;

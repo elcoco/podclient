@@ -76,7 +76,7 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
 {
     /* Callback is passed to json lib to handle incoming data.
      * Data is saved in podcast struct */
-    struct PPItem *item = pp_stack_get_from_end(pp, 0);
+    struct PPToken *item = pp_stack_get_from_end(pp, 0);
     struct APIUserData *data = user_data;
     struct Episode *ep = data->data;
 
@@ -98,8 +98,8 @@ static void episodes_handle_data_cb(struct PP *pp, enum PPDtype dtype, void *use
         ep->title[0] = '\0';
     }
     else if (dtype == PP_DTYPE_STRING || dtype == PP_DTYPE_CDATA) {
-        struct PPItem *item_tag = pp_stack_get_from_end(pp, 1);
-        struct PPItem *item_item = pp_stack_get_from_end(pp, 2);
+        struct PPToken *item_tag = pp_stack_get_from_end(pp, 1);
+        struct PPToken *item_item = pp_stack_get_from_end(pp, 2);
 
 
         if (item_item != NULL && item_item->dtype == PP_DTYPE_TAG_OPEN && strcmp(item_item->data, "channel") == 0) {
