@@ -98,7 +98,6 @@ static void pp_pos_debug(struct PPPosition *pos)
     if (eod)
         printf("%sEOD%s", XBLUE, XRESET);
     printf("\n");
-
 }
 
 static int pp_strstr_nth(const char *haystack, const char *needle, int nth)
@@ -195,12 +194,35 @@ int str_ends_with(const char *str, const char *substr)
     return strncmp(str+offset_start, substr, strlen(substr)) == 0;
 }
 
+char* pp_get_chr_repr(char c, char *buf) {
+    switch (c) {
+        case '\n':
+            strcpy(buf, "\\n");
+            break;
+        case '\t':
+            strcpy(buf, "\\t");
+            break;
+        case '\r':
+            strcpy(buf, "\\r");
+            break;
+        case 32 ... 126:
+            buf[0] = ' ';
+            buf[1] = c;
+            buf[2] = '\0';
+            break;
+        default:
+            sprintf(buf, "%d", c);
+    }
+    return buf;
+}
 
 // TOKEN ////////////////////////////
 static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition *pos, size_t buf_size, enum PPParserState s, int reuse_skip_data)
 {
-    const char *start   = t->capt_start_str;
-    const char *end     = t->capt_end_str;
+    const char *start   = t->start_str;
+    const char *end     = t->end_str;
+    const char *allow_leading   = t->allow_leading;    // allow these chars when itering. If NULL: allow all
+                                             
     const char *delim   = t->delim_chars;    // stop when a char from this list is found
     const char *allow   = t->allow_chars;    // allow these chars when itering. If NULL: allow all
     const char *save    = t->save_chars;     // save these chars to buf
@@ -229,6 +251,9 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
 
     char *psave = t->data;
 
+    // for debugging
+    char chr_buf[32] = "";
+
     int save_count = 0;
     int first = 1;
     int buffer_overflow = 0;
@@ -248,7 +273,7 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
 
             // Handle finding of chars and strings
             case PSTATE_FIND_START:
-                DEBUG("STATE: FIND_START: '%s'\n", start);
+                DEBUG("[%s] STATE: FIND_START: '%s'\n", pp_get_chr_repr(*pos->c, chr_buf), start);
 
                 pp_add_to_buf(search_buf, PP_MAX_SEARCH_BUF, *pos->c);
                 if (strstr(search_buf, start) != NULL) {
@@ -262,7 +287,7 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                     if (end)
                         s = PSTATE_FIND_END;
                     else if (delim)
-                        s = PSTATE_FIND_DELIM;
+                        s = PSTATE_FIND_DELIM_ALLOW_ALL;
                     else if (!delim && !end)
                         s = PSTATE_ACCEPT;
                     else
@@ -272,10 +297,12 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                 break;
 
             case PSTATE_FIND_END:
+                DEBUG("[%s] STATE: FIND_END: '%s'\n", pp_get_chr_repr(*pos->c, chr_buf), end);
                 pp_add_to_buf(search_buf, PP_MAX_SEARCH_BUF, *pos->c);
 
                 if (strstr(search_buf, end) != NULL) {
                     DEBUG("FOUND END: %s\n", end);
+                    //pp_pos_debug(pos);
                     if (!buffer_overflow) {
                         *psave++ = *pos->c;
                         *psave   = '\0';
@@ -285,10 +312,12 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                 }
                 break;
 
+
+            case PSTATE_FIND_DELIM_ALLOW_ALL:
             case PSTATE_FIND_DELIM:
-                DEBUG("STATE: FIND_DELIM: '%s'\n", delim);
+                DEBUG("[%s] STATE: FIND_DELIM: '%s'\n", pp_get_chr_repr(*pos->c, chr_buf), delim);
                 if (strchr(delim, *pos->c) != NULL) {
-                    DEBUG("Found DELIM char: %c\n", *pos->c);
+                    DEBUG("Found DELIM char: '%c'\n", *pos->c);
                     s = PSTATE_ACCEPT;
                     if (save_count <= buf_size-1) {
                         *psave++ = *pos->c;
@@ -306,17 +335,20 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
         // Handle allowed chars, error on disallowed chars
         switch(s) {
             case PSTATE_FIND_START:
-                if (allow && !strchr(allow, *pos->c) && !strchr(start, *pos->c)) {
-                    DEBUG("DISALOWED CHAR: '%c'\n", *pos->c);
+                if (allow_leading && !strchr(allow_leading, *pos->c) && !strchr(start, *pos->c)) {
+                    DEBUG("DISALOWED LEADING CHAR: '%c'\n", *pos->c);
                     return PP_SEARCH_RESULT_SYNTAX_ERROR;
                 }
                 break;
 
+
+            case PSTATE_FIND_DELIM_ALLOW_ALL:
             case PSTATE_FIND_END:
                 // allow all chars until end is found
                 break;
 
             case PSTATE_FIND_DELIM:
+
                 if (allow && !strchr(allow, *pos->c)) {
                     DEBUG("DISALOWED CHAR: '%c'\n", *pos->c);
                     return PP_SEARCH_RESULT_SYNTAX_ERROR;
@@ -335,6 +367,7 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                 // don't save
                 break;
 
+            case PSTATE_FIND_DELIM_ALLOW_ALL:
             case PSTATE_FIND_END:
             case PSTATE_FIND_DELIM:
                 if (!save || (save && strchr(save, *pos->c) != NULL)) {
@@ -344,13 +377,14 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
                         strncpy(t->data, PP_BUFFER_OVERFLOW_PLACEHOLDER, PP_MAX_TOKEN_DATA-1);
                     }
                     else {
-                        DEBUG("SAVE CHR: %c\n", *pos->c);
+                        //DEBUG("SAVE CHR: %c\n", *pos->c);
+                        DEBUG("[%s] SAVE\n", pp_get_chr_repr(*pos->c, chr_buf));
                         save_count++;
                         *psave++ = *pos->c;
                         *psave   = '\0';
                     }
                     pp_add_to_buf(t->skip_data, PP_MAX_SKIP_DATA, *pos->c);
-                    DEBUG("[%c] BUF: '%s'\n", *pos->c, t->skip_data);
+                    //DEBUG("[%c] BUF: '%s'\n", *pos->c, t->skip_data);
                 }
                 break;
 
@@ -380,16 +414,16 @@ static enum PPSearchResult pp_token_search(struct PPToken *t, struct PPPosition 
 
 static void pp_token_strip(struct PPToken *t)
 {
-    if (t->capt_end_str) {
-        int index = strlen(t->data)-strlen(t->capt_end_str);
+    if (t->end_str) {
+        int index = strlen(t->data)-strlen(t->end_str);
         t->data[index] = '\0';
     }
     if (t->delim_chars)
         t->data[strlen(t->data)-1] = '\0';
 
-    if (t->capt_start_str) {
+    if (t->start_str) {
         char *l = t->data;
-        char *r = t->data+strlen(t->capt_start_str);
+        char *r = t->data+strlen(t->start_str);
         while (*r != '\0')
             *l++ = *r++;
         *l = '\0';
@@ -571,8 +605,9 @@ struct PPToken pp_token_init()
     t.allow_chars = NULL;
     t.illegal_chars = NULL;
 
-    t.capt_start_str = NULL;
-    t.capt_end_str = NULL;
+    t.allow_leading = NULL;
+    t.start_str = NULL;
+    t.end_str = NULL;
 
     //t.any = NULL;
     return t;
@@ -621,9 +656,10 @@ void pp_token_set_data(struct PPToken *p, const char *data)
 
 enum PPParseResult pp_parse_token(struct PP *pp, struct PPPosition *pos_cpy, struct PPToken *t)
 {
+    DEBUG("\n");
     switch(t->dtype) {
         case PP_DTYPE_STRING:
-            DEBUG("** TRYING STRING: '%s' <-> '%s'\n", t->capt_start_str, t->capt_end_str);
+            DEBUG("** TRYING STRING: '%s' <-> '%s'\n", t->start_str, t->end_str);
             break;
         case PP_DTYPE_OBJECT_OPEN:
             DEBUG("** TRYING OBJECT_OPEN\n");
@@ -703,9 +739,11 @@ enum PPParseResult pp_parse_token(struct PP *pp, struct PPPosition *pos_cpy, str
 
 size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
 {
+    DEBUG("\n");
+    DEBUG("** STARTING PASS **********************\n");
+
     pp->pos = pp_pos_init(chunks, nchunks);
     size_t nread = 0;
-    INFO(" ********************** DOING PASS\n");
 
     if (pp->zero_rd_cnt >= pp->pos.max_chunks-1) {
         assert(pp->t_skip_is_set == 1);                // trying to skip to skip char but it has no intentional value
@@ -713,8 +751,8 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
         enum PPSearchResult res;
 
 
-        if (pp->t_skip.capt_end_str) {
-            INFO("[%d] Skip to: '%s'\n", pp->zero_rd_cnt, pp->t_skip.capt_end_str);
+        if (pp->t_skip.end_str) {
+            INFO("[%d] Skip to: '%s'\n", pp->zero_rd_cnt, pp->t_skip.end_str);
             res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_END, 1);
         }
         else if (pp->t_skip.delim_chars) {
@@ -722,7 +760,7 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
             res = pp_token_search(&(pp->t_skip), &(pp->pos), PP_MAX_TOKEN_DATA, PSTATE_FIND_DELIM, 1);
         }
         else {
-            DEBUG("end: %s, delim: %s\n", pp->t_skip.capt_end_str, pp->t_skip.delim_chars);
+            DEBUG("end: %s, delim: %s\n", pp->t_skip.end_str, pp->t_skip.delim_chars);
             assert(!"Don't know where to skip to!\n");
         }
 
@@ -762,6 +800,7 @@ size_t pp_parse(struct PP *pp, char **chunks, size_t nchunks)
         struct PPToken *pe = pp->tokens;
 
         for (int i=0 ; i<pp->max_tokens ; i++, pe++) {
+            //pp_pos_debug(&(pp->pos));
             enum  PPParseResult res;
             if ((res = pp_parse_token(pp, &pos_cpy, pe)) == PP_PARSE_RESULT_INCOMPLETE) {
                 if (nread == 0)

@@ -12,7 +12,7 @@
 //      Super corner case but this actually did happen once with the RSS tag!
 // Max data length that can be in a XMLItem to hold data like: strings, numbers or bool
 // If too small, strings will be cut off. Streams will not become corrupted.
-#define PP_MAX_TOKEN_DATA 32
+#define PP_MAX_TOKEN_DATA 128
 
 // The stack holds XMLItems and represents the path from root to the currently parsed item
 // eg: {object, key, array, string}
@@ -27,7 +27,7 @@
 // and the data will be ignored.
 // While parsing the contents of this buffer are copied to XMLItem.data
 // And can be cropped depending on XML_MAX_DATA.
-#define PP_MAX_PARSE_BUFFER 64
+#define PP_MAX_PARSE_BUFFER 128
 
 #define PP_MAX_SKIP_DATA 32
 
@@ -140,6 +140,7 @@ enum PPParserState {
     PSTATE_FIND_START,
     PSTATE_FIND_END,
     PSTATE_FIND_DELIM,
+    PSTATE_FIND_DELIM_ALLOW_ALL,
 
     PSTATE_ACCEPT,
     PSTATE_REJECT_EOD,
@@ -166,23 +167,18 @@ struct PP;
 /* Defines how a bunch of chars should be parsed into a token.
  * It also holds the actual data */
 struct PPToken {
-    enum PPMatchType match_type;
 
-    const char *start;              // start search at this string
-    const char *end;                // end search at this string
-    const char *ignore_chars;       // tell search to ignore these chars and save all others to buffer
-    const char *error_chars;        // error when any of these chars are encountered
-    const char *any;                // save any of these chars to buffer
+    enum PPMatchType match_type;
 
     const char *delim_chars;        // stop searching when one of these chars is found
     const char *allow_chars;        // allow these chars
     const char *illegal_chars;     // error on any of these chars. error on none if NULL
     const char *save_chars;         // save any of these chars. Save all if NULL
                                     //
-    const char *capt_start_str;     // capture between delimiters
-    const char *capt_end_str;
-
-
+                                    
+    const char *allow_leading;  // is only effective when searching for start string
+    const char *start_str;     // capture between delimiters
+    const char *end_str;
 
     enum PPDtype dtype;
 

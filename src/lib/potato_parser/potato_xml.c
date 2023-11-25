@@ -269,8 +269,8 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     struct PPToken t_string = pp_token_init();
 
     //struct PPToken t_test = pp_token_init();
-    //t_test.capt_start_str = "<";
-    ////t_test.capt_end_str   = "</bever>";
+    //t_test.start_str = "<";
+    ////t_test.end_str   = "</bever>";
     //t_test.delim_chars    = ">";
     //t_test.allow_chars    = " \r\n\t";
     //t_test.dtype          = PP_DTYPE_COMMENT;
@@ -289,9 +289,9 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     //t_comment.cb             = NULL;
     //t_comment.step_over      = 1;
 
-    t_comment.capt_start_str = PP_XML_CHAR_COMMENT_START;
-    t_comment.capt_end_str   = PP_XML_CHAR_COMMENT_END;
-    t_comment.allow_chars    = " \r\n\t";
+    t_comment.start_str = PP_XML_CHAR_COMMENT_START;
+    t_comment.end_str   = PP_XML_CHAR_COMMENT_END;
+    t_comment.allow_leading    = " \r\n\t";
     t_comment.dtype          = PP_DTYPE_COMMENT;
     t_comment.greedy         = PP_METHOD_NON_GREEDY;
     t_comment.cb             = NULL;
@@ -306,9 +306,9 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     //t_cdata.cb               = NULL;
     //t_cdata.step_over        = 1;
     
-    t_cdata.capt_start_str   = PP_XML_CHAR_CDATA_START;
-    t_cdata.capt_end_str     = PP_XML_CHAR_CDATA_END;
-    t_cdata.allow_chars      = " \r\n\t";
+    t_cdata.start_str   = PP_XML_CHAR_CDATA_START;
+    t_cdata.end_str     = PP_XML_CHAR_CDATA_END;
+    t_cdata.allow_leading      = " \r\n\t";
     t_cdata.dtype            = PP_DTYPE_CDATA;
     t_cdata.greedy           = PP_METHOD_GREEDY;
     t_cdata.cb               = NULL;
@@ -323,9 +323,9 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     //t_header.cb              = NULL;
     //t_header.step_over       = 1;
 
-    t_header.capt_start_str  = PP_XML_CHAR_HEADER_START;
-    t_header.capt_end_str    = PP_XML_CHAR_HEADER_END;
-    t_header.allow_chars     = " \r\n\t";
+    t_header.start_str  = PP_XML_CHAR_HEADER_START;
+    t_header.end_str    = PP_XML_CHAR_HEADER_END;
+    t_header.allow_leading     = " \r\n\t";
     t_header.dtype           = PP_DTYPE_HEADER;
     t_header.greedy          = PP_METHOD_NON_GREEDY;
     t_header.cb              = NULL;
@@ -340,9 +340,9 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     //t_tag_close.cb           = pp_xml_tag_close_cb;
     //t_tag_close.step_over    = 1;
 
-    t_tag_close.capt_start_str = PP_XML_CHAR_TAG_CLOSE_START;
-    t_tag_close.capt_end_str   = PP_XML_CHAR_TAG_CLOSE_END;
-    t_tag_close.allow_chars    = " \r\n\t";
+    t_tag_close.start_str = PP_XML_CHAR_TAG_CLOSE_START;
+    t_tag_close.end_str   = PP_XML_CHAR_TAG_CLOSE_END;
+    t_tag_close.allow_leading    = " \r\n\t";
     t_tag_close.dtype          = PP_DTYPE_TAG_CLOSE;
     t_tag_close.greedy         = PP_METHOD_NON_GREEDY;
     t_tag_close.cb             = pp_xml_tag_close_cb;
@@ -357,9 +357,9 @@ struct PP pp_xml_init(handle_data_cb data_cb)
     //t_tag_open.cb            = pp_xml_tag_open_cb;
     //t_tag_open.step_over     = 1;
 
-    t_tag_open.capt_start_str = PP_XML_CHAR_TAG_OPEN_START;
-    t_tag_open.capt_end_str   = PP_XML_CHAR_TAG_OPEN_END;
-    t_tag_open.allow_chars    = " \r\n\t";
+    t_tag_open.start_str = PP_XML_CHAR_TAG_OPEN_START;
+    t_tag_open.end_str   = PP_XML_CHAR_TAG_OPEN_END;
+    t_tag_open.allow_leading    = " \r\n\t";
     t_tag_open.dtype          = PP_DTYPE_TAG_OPEN;
     t_tag_open.greedy         = PP_METHOD_NON_GREEDY;
     t_tag_open.cb             = pp_xml_tag_open_cb;

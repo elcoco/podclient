@@ -11,6 +11,7 @@
 #include "lib/json/json.h"
 #include "lib/potato_parser/potato_xml.h"
 #include "lib/potato_parser/potato_json.h"
+#include "lib/regex/potato_regex.h"
 
 #define SUCCESS 0
 
@@ -287,9 +288,7 @@ static void handle_local_episode_data_cb(struct JSON *json, enum JSONEvent ev, v
 
 int main(int argc, char **argv)
 {
-    //test_json();
-    //return 0;
-    //
+
     
     struct State s = state_init();
     if (parse_args(&s, argc, argv) < 0) {
@@ -297,6 +296,8 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    re_test();
+    return 0;
     //test_pp_xml();
     //return 0;
 
