@@ -17,6 +17,10 @@ int do_error = 1;
 #define MAX_GROUP_STACK 256
 #define MAX_STATE_OUT   1024
 
+#define MAX_REGEX 256
+
+#define CONCAT_SYM '@'
+
 
 
 enum StateType {
@@ -79,29 +83,27 @@ struct State* nfa_state_init(struct NFA *nfa, int c, struct State *s_out, struct
 
 void state_debug(struct State *s, int level)
 {
-    const int spaces = 3;
+    const int spaces = 2;
+
+    if (s == NULL) {
+        //printf("-> NULL\n");
+        return;
+    }
     for (int i=0 ; i<level*spaces ; i++)
         printf(" ");
 
-    if (s == NULL) {
-        printf("-> NULL\n");
-        return;
-    }
-
-    char buf[16] = "";
     switch (s->c) {
         case STATE_MATCH:
-            strcpy(buf, "MATCH");
-            break;
+            printf("  MATCH!\n");
+            return;
         case STATE_SPLIT:
-            strcpy(buf, "SPLIT");
+            printf("  SPLIT\n");
             break;
         default:
-            sprintf(buf, "\'%c\'", s->c);
+            printf("  State: '%c'\n", s->c);
             break;
 
     }
-    printf("-> State %s\n", buf);
     state_debug(s->out, level+1);
     state_debug(s->out1, level+1);
 }
@@ -160,14 +162,14 @@ void group_patch_outlist(struct Group *g, struct State **s)
     }
 }
 
-struct OutList* outlist_join(struct OutList *l0, struct OutList *o1)
+struct OutList* outlist_join(struct OutList *l0, struct OutList *l1)
 {
     /* Joint out of  to start of g1 */
     struct OutList *bak = l0;
     while (l0->next != NULL)
         l0 = l0->next;
 
-    l0->next = o1;
+    l0->next = l1;
     return bak;
 }
 
@@ -192,8 +194,7 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
     struct Group stack[MAX_GROUP_STACK];
     struct OutList pool[MAX_OUT_LIST_POOL];
     struct Group *stackp = stack;
-    struct Group g0, g1; // the paths groups take from stack
-    struct Group g;      // the new path after CONCAT or SPLIT
+    struct Group g, g0, g1; // the paths groups take from stack
 
     struct State *s;
     struct OutList *outlistp = pool;
@@ -201,13 +202,11 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
 
     #define PUSH(S) *stackp++ = S
     #define POP()   *--stackp
-    #define PUSH_OL(L) *outlistp++ = L
     #define GET_OL() outlistp++
 
     DEBUG("Compiling pattern: '%s'\n", pattern);
 
     for (const char *p=pattern ; *p ; p++) {
-        DEBUG("CUR CHAR: %c\n", *p);
         switch (*p) {
             case '&':       // concat
                 g1 = POP();
@@ -217,6 +216,12 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
                 PUSH(g);
                 break;
             case '?':       // zero or one
+                g = POP();
+                s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
+                l = ol_init(GET_OL(), &s->out1);
+                l = outlist_join(g.out, l);
+                g = group_init(nfa, s, l);
+                PUSH(g);
                 break;
             case '|':       // alternate
                 g1 = POP();
@@ -227,17 +232,18 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
 
                 break;
             case '*':       // zero or more
-                //g = POP();
-                //s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
-                //group_patch_out(&g, s);
-                //PUSH(group_init(nfa, s, &s->out1));
+                g = POP();
+                s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
+                group_patch_outlist(&g, &s);
+                l = ol_init(GET_OL(), &s->out1);
+                PUSH(group_init(nfa, g.start, l));
                 break;
             case '+':       // one or more
                 g = POP();
                 s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
                 group_patch_outlist(&g, &s);
                 l = ol_init(GET_OL(), &s->out1);
-                PUSH(group_init(nfa, g.start, l));
+                PUSH(group_init(nfa, s, l));
                 break;
             default:        // it is a normal character
                 s = nfa_state_init(nfa, *p, NULL, NULL);
@@ -250,30 +256,299 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
 
     stack_debug(stack, MAX_GROUP_STACK);
 
-
     g = POP();
 
     // connect last state that indicates a succesfull match
     struct State *match_state = nfa_state_init(nfa, STATE_MATCH, NULL, NULL);
 
-
-    DEBUG("first  item: '%c'\n", g.start->c);
-    //DEBUG("child  item: '%c'\n", g.start->out->c);
     group_patch_outlist(&g, &match_state);
 
     state_debug(g.start, 0);
-    DEBUG("first  item: '%c'\n", g.start->c);
-    DEBUG("child  item: '%c'\n", g.start->out->c);
-    //DEBUG("second item: '%d'\n", (g.out->s)->c);
 
+    #undef POP
+    #undef PUSH
+    #undef GET_OL
 
     return g.start;
 }
 
+/* Enum is ordered in order of precedence, do not change order!!!
+ * Higher number is higher precedence so we can easily compare.
+ * Precedence HIGH->LOW: (|&?*+
+ * */
+enum REMetaChar {
+    RE_META_UNDEFINED = 256,
+
+    // QUANTIFIERS (in order of precedence) don't change this!!!!!
+    RE_META_PLUS,       //  +   GREEDY     match preceding 1 or more times
+    RE_META_STAR,       //  *   GREEDY     match preceding 0 or more times
+    RE_META_QUESTION,   //  ?   NON GREEDY match preceding 1 time            when combined with another quantifier it makes it non greedy
+    RE_CONCAT,          // explicit concat symbol
+    RE_META_PIPE,       //  |   OR
+    //////////////////////////
+                         //
+    RE_META_RANGE_START,  // {n}  NON GREEDY match preceding n times
+    RE_META_RANGE_END,    // {n}  NON GREEDY match preceding n times
+    RE_META_GROUP_START,  // (
+    RE_META_GROUP_END,    // )
+    RE_META_CCLASS_START, // [
+    RE_META_CCLASS_END,   // ]
+                         
+    // OPERATORS
+    RE_META_CARET,        // ^  can be NEGATE|BEGIN
+    RE_META_NEGATE,       // ^
+                          //
+    RE_META_BACKSLASH,    // \ backreference, not going to implement
+    RE_META_BEGIN,        // ^
+    RE_META_END,          // $
+    RE_META_DOT,          // .    any char except ' '
+                          
+    RE_CHAR,             // literal char
+
+                         
+    RE_MATCH_DIGIT,            // \d   [0-9]
+    RE_MATCH_NON_DIGIT,        // \D   [^0-9]
+    RE_MATCH_ALPHA_NUM,        // \w   [a-bA-B0-9]
+    RE_MATCH_NON_ALPHA_NUM,    // \W   [^a-bA-B0-9]
+    RE_MATCH_SPACE,            // \s   ' ', \n, \t, \r
+    RE_MATCH_NON_SPACE,        // \S   ^' '
+
+                             //
+};
+
+int re_get_meta_char(const char **s)
+{
+    /* Reads first meta char from  string.
+     * If one char meta or char, increment pointer +1
+     * If two char meta, increment pointer +2 */
+    assert(strlen(*s) > 0);
+
+    char c = **s;
+
+    if (strlen(*s) > 1 && **s == '\\') {
+        c = *((*s)+1);
+        (*s)+=2;
+        switch (c) {
+            case 'd':
+                return RE_MATCH_DIGIT;
+            case 'D':
+                return RE_MATCH_NON_DIGIT;
+            case 'w':
+                return RE_MATCH_ALPHA_NUM;
+            case 'W':
+                return RE_MATCH_ALPHA_NUM;
+            case 's':
+                return RE_MATCH_SPACE;
+            case 'S':
+                return RE_MATCH_NON_SPACE;
+            default:
+                return RE_CHAR;
+        }
+    }
+
+    (*s)++;
+    switch (c) {
+        case '*':
+            return RE_META_STAR;
+        case '+':
+            return RE_META_PLUS;
+        case '?':
+            return RE_META_QUESTION;
+        case '{':
+            return RE_META_RANGE_START;
+        case '}':
+            return RE_META_RANGE_END;
+        case '(':
+            return RE_META_GROUP_START;
+        case ')':
+            return RE_META_GROUP_END;
+        case '[':
+            return RE_META_CCLASS_START;
+        case ']':
+            return RE_META_CCLASS_END;
+        case '|':
+            return RE_META_PIPE;
+        case '\\':
+            return RE_META_BACKSLASH;
+        // decide between BEGIN and NEGATE
+        case '^':
+            return RE_META_CARET;
+        case '$':
+            return RE_META_END;
+        case '.':
+            return RE_META_DOT;
+        default:
+            return c;
+    }
+}
+
+void debug_reg(int *arr, size_t len, int *pos)
+{
+    int *p = arr;
+    for (int i=0 ; i<len ; i++, p++) {
+        if (!*p)
+            break;
+
+        if (p == pos)
+            break;
+
+        if (i != 0)
+            printf(" ");
+
+        switch (*p) {
+            case RE_CONCAT:
+                printf("%c", CONCAT_SYM);
+                break;
+            case RE_META_GROUP_START:
+                printf("(");
+                break;
+            case RE_META_STAR:
+                printf("*");
+                break;
+            case RE_META_PLUS:
+                printf("+");
+                break;
+            case RE_META_QUESTION:
+                printf("?");
+                break;
+            case RE_META_PIPE:
+                printf("|");
+                break;
+            case RE_MATCH_ALPHA_NUM:
+                printf("\\w");
+                break;
+            case RE_MATCH_DIGIT:
+                printf("\\d");
+                break;
+            case RE_MATCH_SPACE:
+                printf("\\s");
+                break;
+            default:
+                printf("%c", *p);
+                break;
+        }
+    }
+    printf("\n");
+}
+
+int infix_to_postfix(const char *expr)
+{
+    // intermediate operator stack
+    // output queue
+    // input array
+    //
+    // OP precedence: (|&?*+^
+    //
+    // Read TOKEN
+    //   if LETTER => add to queue
+    //   if OP
+    //     while OP on top of stack with grater precedence
+    //       pop OP from stack into output queue
+    //     push OP onto stack
+    //   if LBRACKET => push onto stack
+    //   if RBRACKET
+    //     while not LBRACKET on top of stack
+    //       pop OP from stack into output queue
+    //      pop LBRACKET from stack and throw away
+    //
+    // when done
+    //   while stack not empty
+    //     pop OP from stack to queue
+    //
+    //  
+
+    DEBUG("Parsing: %s\n", expr);
+
+    int outq[MAX_REGEX];    // ouput queue
+    int opstack[MAX_REGEX]; // intermediate storage stack for operators
+
+    memset(outq, 0, sizeof(int) * MAX_REGEX);
+    memset(opstack, 0, sizeof(int) * MAX_REGEX);
+
+    int *outqp = outq;
+    int *stackp = opstack;
+
+    int op;
+
+    #define PUSH(S) *stackp++ = S
+    #define POP()   *--stackp
+    #define PUSH_OUT(S) *outqp++ = S
+
+    const char **reptr = &expr;
+
+    while (strlen(*reptr)) {
+        int c = re_get_meta_char(reptr);
+
+        DEBUG("CHAR: '%c'\n", c);
+
+        switch (c) {
+            case RE_META_GROUP_START:
+                DEBUG("GROUP START\n");
+                PUSH(c);
+                break;
+            case RE_META_GROUP_END:
+                DEBUG("GROUP END\n");
+                while ((op = POP()) != RE_META_GROUP_START)
+                    PUSH_OUT(op);
+                break;
+            case RE_META_STAR:
+            case RE_META_PLUS:
+            case RE_META_QUESTION:
+            case RE_META_PIPE:
+                while (stackp != opstack) {
+                    op = POP();
+                    DEBUG("POP: %c, %d\n", op, op);
+
+                    // check precedence (operators are ordered in enum)
+                    if (op >= c) {
+                        PUSH(op);
+                        break;
+                    }
+
+                    PUSH_OUT(op);
+                }
+                PUSH_OUT(c);
+                break;
+            case RE_CONCAT:
+                PUSH_OUT(c);
+                break;
+            default:
+                PUSH_OUT(c);
+                break;
+
+        }
+        DEBUG("QUEUE: ");
+        debug_reg(outq, MAX_REGEX, outqp);
+        DEBUG("STACK: ");
+        debug_reg(opstack, MAX_REGEX, stackp);
+        printf("\n");
+    }
+
+    // empty stack into out queue
+    while (stackp != opstack)
+        PUSH_OUT(POP());
+
+
+    DEBUG("QUEUE: ");
+    debug_reg(outq, MAX_REGEX, outqp);
+    DEBUG("STACK: ");
+    debug_reg(opstack, MAX_REGEX, stackp);
+    printf("\n");
+
+    return 0;
+
+    #undef PUSH
+    #undef POP
+    #undef PUSH_OUT
+}
+
 int main()
 {
+    infix_to_postfix("ab(b|c)?a+b");
+    return 1;
+
     struct NFA nfa = nfa_init();
-    nfa_compile(&nfa, "ab*a+cd&xz&|");
+    nfa_compile(&nfa, "ab&b&b&b&bb&e&e&|");
     return 1;
 
 
