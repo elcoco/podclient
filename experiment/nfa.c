@@ -19,7 +19,7 @@ int do_error = 1;
 
 #define MAX_REGEX 256
 
-#define CONCAT_SYM '@'
+#define CONCAT_SYM '&'
 
 
 
@@ -321,7 +321,7 @@ int re_get_meta_char(const char **s)
     /* Reads first meta char from  string.
      * If one char meta or char, increment pointer +1
      * If two char meta, increment pointer +2 */
-    assert(strlen(*s) > 0);
+    //assert(strlen(*s) > 0);
 
     char c = **s;
 
@@ -377,6 +377,8 @@ int re_get_meta_char(const char **s)
             return RE_META_END;
         case '.':
             return RE_META_DOT;
+        case CONCAT_SYM:
+            return RE_CONCAT;
         default:
             return c;
     }
@@ -431,6 +433,85 @@ void debug_reg(int *arr, size_t len, int *pos)
     printf("\n");
 }
 
+char* re2post(char *re)
+{
+	int nalt, natom;
+	static char buf[8000];
+	char *outputp;
+	struct {
+		int nalt;
+		int natom;
+	} paren[100], *p;
+	
+	p = paren;
+	outputp = buf;
+	nalt = 0;
+	natom = 0;
+	if(strlen(re) >= sizeof buf/2)
+		return NULL;
+	for(; *re; re++){
+		switch(*re){
+		case '(':
+			if(natom > 1){
+				--natom;
+				*outputp++ = '.';
+			}
+			if(p >= paren+100)
+				return NULL;
+			p->nalt = nalt;
+			p->natom = natom;
+			p++;
+			nalt = 0;
+			natom = 0;
+			break;
+		case '|':
+			if(natom == 0)
+				return NULL;
+			while(--natom > 0)
+				*outputp++ = '.';
+			nalt++;
+			break;
+		case ')':
+			if(p == paren)
+				return NULL;
+			if(natom == 0)
+				return NULL;
+			while(--natom > 0)
+				*outputp++ = '.';
+			for(; nalt > 0; nalt--)
+				*outputp++ = '|';
+			--p;
+			nalt = p->nalt;
+			natom = p->natom;
+			natom++;
+			break;
+		case '*':
+		case '+':
+		case '?':
+			if(natom == 0)
+				return NULL;
+			*outputp++ = *re;
+			break;
+		default:
+			if(natom > 1){
+				--natom;
+				*outputp++ = '.';
+			}
+			*outputp++ = *re;
+			natom++;
+			break;
+		}
+	}
+	if(p != paren)
+		return NULL;
+	while(--natom > 0)
+		*outputp++ = '.';
+	for(; nalt > 0; nalt--)
+		*outputp++ = '|';
+	*outputp = 0;
+	return buf;
+}
+
 int infix_to_postfix(const char *expr)
 {
     // intermediate operator stack
@@ -455,12 +536,53 @@ int infix_to_postfix(const char *expr)
     //   while stack not empty
     //     pop OP from stack to queue
     //
-    //  
+    // read: https://gist.github.com/gmenard/6161825
+    // read: https://gist.github.com/DmitrySoshnikov/1239804/ba3f22f72d7ea00c3a662b900ded98d344d46752
+    // yt:   https://www.youtube.com/watch?v=QzVVjboyb0s
 
     DEBUG("Parsing: %s\n", expr);
 
-    int outq[MAX_REGEX];    // ouput queue
-    int opstack[MAX_REGEX]; // intermediate storage stack for operators
+
+    // start by adding explicit CAT symbols
+    int regex_expl[MAX_REGEX]; // regex chars with added concat symbols
+    memset(regex_expl, 0, sizeof(int) * MAX_REGEX);
+
+    int *p_out = regex_expl;
+    const char **p_in = &expr;
+
+    while (strlen(*p_in)) {
+        DEBUG("len: %ld\n", strlen(*p_in));
+
+        int c0 = re_get_meta_char(p_in);
+        int c1 = re_get_meta_char(p_in);
+
+        *p_out++ = c0;
+        if (!c1)
+            break;
+
+        DEBUG("chars: '%c' '%c'\n", c0, c1);
+
+        if (c0 != RE_META_GROUP_START &&
+            c1 != RE_META_GROUP_END &&
+            c1 != RE_META_PIPE &&
+            c1 != RE_META_QUESTION &&
+            c1 != RE_META_PLUS &&
+            c1 != RE_META_STAR &&
+            c1 != RE_META_CARET &&
+            c0 != RE_META_CARET &&
+            c0 != RE_META_PIPE)
+            *p_out++ = RE_CONCAT;
+
+        (*p_in)--;
+    }
+
+    DEBUG("Regex in explicit CAT notation: ");
+    debug_reg(regex_expl, MAX_REGEX, p_out);
+
+
+    // Turn it into reverse Polish notation (RPN)
+    int outq[MAX_REGEX];       // ouput queue
+    int opstack[MAX_REGEX];    // intermediate storage stack for operators
 
     memset(outq, 0, sizeof(int) * MAX_REGEX);
     memset(opstack, 0, sizeof(int) * MAX_REGEX);
@@ -470,50 +592,65 @@ int infix_to_postfix(const char *expr)
 
     int op;
 
+    // track how many pipes we've seen and if they're in () or not
+    int op_pipe = 0;
+    int in_group = 0;
+
     #define PUSH(S) *stackp++ = S
     #define POP()   *--stackp
     #define PUSH_OUT(S) *outqp++ = S
 
-    const char **reptr = &expr;
+    int *c = regex_expl;
 
-    while (strlen(*reptr)) {
-        int c = re_get_meta_char(reptr);
+    while (*c) {
 
-        DEBUG("CHAR: '%c'\n", c);
+        DEBUG("CHAR: '%c'\n", *c);
+        // TODO put concat symbols in
 
-        switch (c) {
+        switch (*c) {
             case RE_META_GROUP_START:
                 DEBUG("GROUP START\n");
-                PUSH(c);
+                PUSH(*c);
+                in_group = 1;
                 break;
             case RE_META_GROUP_END:
                 DEBUG("GROUP END\n");
                 while ((op = POP()) != RE_META_GROUP_START)
                     PUSH_OUT(op);
+                for (int i=0 ; i<op_pipe ; i++) {
+                    DEBUG("PUT PIPE\n");
+                    PUSH_OUT(RE_META_PIPE);
+                }
+                op_pipe = 0;
+                in_group = 0;
+                break;
+            case RE_META_PIPE:
+                op_pipe++;
+                break;
+            case RE_CONCAT:
+                DEBUG("CONCAT\n");
+                PUSH(*c);
                 break;
             case RE_META_STAR:
             case RE_META_PLUS:
             case RE_META_QUESTION:
-            case RE_META_PIPE:
+                // PIPE is already postfix so we should put it behind next char
                 while (stackp != opstack) {
                     op = POP();
                     DEBUG("POP: %c, %d\n", op, op);
 
                     // check precedence (operators are ordered in enum)
-                    if (op >= c) {
+                    if (op >= *c) {
                         PUSH(op);
                         break;
                     }
 
                     PUSH_OUT(op);
                 }
-                PUSH_OUT(c);
-                break;
-            case RE_CONCAT:
-                PUSH_OUT(c);
+                PUSH_OUT(*c);
                 break;
             default:
-                PUSH_OUT(c);
+                PUSH_OUT(*c);
                 break;
 
         }
@@ -522,12 +659,16 @@ int infix_to_postfix(const char *expr)
         DEBUG("STACK: ");
         debug_reg(opstack, MAX_REGEX, stackp);
         printf("\n");
+        c++;
     }
 
     // empty stack into out queue
     while (stackp != opstack)
         PUSH_OUT(POP());
 
+    // put pipes
+    for (int i=0 ; i<op_pipe ; i++)
+        PUSH_OUT(RE_META_PIPE);
 
     DEBUG("QUEUE: ");
     debug_reg(outq, MAX_REGEX, outqp);
@@ -544,7 +685,13 @@ int infix_to_postfix(const char *expr)
 
 int main()
 {
-    infix_to_postfix("ab(b|c)?a+b");
+    //infix_to_postfix("a&b&c");
+    //infix_to_postfix("ab(b|c|d)?a+b");
+    //infix_to_postfix("(b|c|d)a+|bbc");
+    DEBUG("out: %s\n", re2post("abcdef"));
+    infix_to_postfix("abcdef");
+
+
     return 1;
 
     struct NFA nfa = nfa_init();
