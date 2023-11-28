@@ -596,30 +596,30 @@ struct ReToken* re_rewrite_range(struct ReToken *tokens, size_t size)
     memcpy(tokens, out_buf, size*sizeof(struct ReToken));
     return tokens;
 
-#undef STACK_IS_EMPTY
-#undef PUSH
-#undef POP
-#undef RESET_CCLASS
+    #undef STACK_IS_EMPTY
+    #undef PUSH
+    #undef POP
+    #undef RESET_CCLASS
 }
-
 
 struct ReToken* re_to_explicit_cat(struct ReToken *tokens, size_t size)
 {
-    /* Parse expression into tokens and put in explicit cat tokens */
+    /* Put in explicit cat tokens */
     struct ReToken out_buf[size];
-    struct ReToken *t_out = out_buf;
+    struct ReToken *outp = out_buf;
     struct ReToken *t0 = tokens;
+
+    // return NULL in case of a buffer overflow
+    #define PUSH_OR_RETURN(S) if (outp-out_buf >= size) { ERROR("Failed to add concat symbols, buffer is full: %ld\n", size); return NULL; } else { *outp++ = S; }
 
     memset(&out_buf, 0, sizeof(struct ReToken) * size);
 
     for (; t0->type != RE_TOK_TYPE_UNDEFINED ; t0++) {
 
-        *t_out++ = *t0;
-
+        PUSH_OR_RETURN(*t0);
         struct ReToken *t1 = t0+1;
 
         if (t1->type != RE_TOK_TYPE_UNDEFINED) {
-            //DEBUG("'%c' - '%c', type: '%d'\n", t0.c0, t1.c0, t1.type);
 
             if (t0->type != RE_TOK_TYPE_GROUP_START &&
                 t1->type != RE_TOK_TYPE_GROUP_END &&
@@ -629,13 +629,15 @@ struct ReToken* re_to_explicit_cat(struct ReToken *tokens, size_t size)
                 t1->type != RE_TOK_TYPE_STAR &&
                 t1->type != RE_TOK_TYPE_CARET &&
                 t0->type != RE_TOK_TYPE_CARET &&
-                t0->type != RE_TOK_TYPE_PIPE)
-                *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_CONCAT};
-
+                t0->type != RE_TOK_TYPE_PIPE) {
+                    PUSH_OR_RETURN((struct ReToken){.type=RE_TOK_TYPE_CONCAT});
+            }
         }
     }
     memcpy(tokens, out_buf, size*sizeof(struct ReToken));
     return tokens;
+
+    #undef PUSH_OR_RETURN
 }
 
 int infix_to_postfix(struct ReToken *tokens, struct ReToken *buf, size_t size)
@@ -684,18 +686,15 @@ int infix_to_postfix(struct ReToken *tokens, struct ReToken *buf, size_t size)
     while (t->type != RE_TOK_TYPE_UNDEFINED) {
         switch (t->type) {
             case RE_TOK_TYPE_GROUP_START:
-                //DEBUG("GROUP START\n");
                 PUSH(*t);
                 in_group = 1;
                 break;
             case RE_TOK_TYPE_GROUP_END:
-                //DEBUG("GROUP END\n");
                 while ((op = POP()).type != RE_TOK_TYPE_GROUP_START)
                     PUSH_OUT(op);
                 for (int i=0 ; i<op_pipe ; i++) {
                     struct ReToken t_pipe = {RE_TOK_TYPE_PIPE};
                     PUSH_OUT(t_pipe);
-                    //DEBUG("PUT PIPE\n");
                 }
                 op_pipe = 0;
                 in_group = 0;
@@ -704,23 +703,19 @@ int infix_to_postfix(struct ReToken *tokens, struct ReToken *buf, size_t size)
                 op_pipe++;
                 break;
             case RE_TOK_TYPE_CONCAT:
-                //DEBUG("CONCAT\n");
                 PUSH(*t);
                 break;
             case RE_TOK_TYPE_STAR:
             case RE_TOK_TYPE_PLUS:
             case RE_TOK_TYPE_QUESTION:
-                // PIPE is already postfix so we should put it behind next char
                 while (stackp != opstack) {
                     op = POP();
-                    //DEBUG("POP: %c, %d\n", op.c0, op.c0);
 
                     // check precedence (operators are ordered in enum)
                     if (op.c0 >= t->c0) {
                         PUSH(op);
                         break;
                     }
-
                     PUSH_OUT(op);
                 }
                 PUSH_OUT(*t);
@@ -773,7 +768,9 @@ int main(int argc, char **argv)
 
     DEBUG("RANGE:   "); debug_reg(tokens_infix);
     
-    re_to_explicit_cat(tokens_infix, MAX_REGEX);
+    if (re_to_explicit_cat(tokens_infix, MAX_REGEX) == NULL)
+        return 1;
+
     DEBUG("CAT:     "); debug_reg(tokens_infix);
 
     infix_to_postfix(tokens_infix, tokens_postfix, MAX_REGEX);
