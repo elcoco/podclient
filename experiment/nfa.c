@@ -7,6 +7,16 @@ int do_debug = 1;
 int do_info = 1;
 int do_error = 1;
 
+/* Read stuff:
+ * OG Ken Thompson: https://dl.acm.org/doi/10.1145/363347.363387
+ * Russ Cox: https://swtch.com/~rsc/regexp/regexp1.html
+ *
+ * Reverse Polish Notation:
+ * https://gist.github.com/gmenard/6161825
+ * https://gist.github.com/DmitrySoshnikov/1239804/ba3f22f72d7ea00c3a662b900ded98d344d46752
+ * https://www.youtube.com/watch?v=QzVVjboyb0s
+ */
+
 #define DEBUG(M, ...) if(do_debug){fprintf(stdout, "[DEBUG] " M, ##__VA_ARGS__);}
 #define INFO(M, ...) if(do_info){fprintf(stdout, M, ##__VA_ARGS__);}
 #define ERROR(M, ...) if(do_error){fprintf(stderr, "[ERROR] (%s:%d) " M, __FILE__, __LINE__, ##__VA_ARGS__);}
@@ -16,64 +26,114 @@ int do_error = 1;
 #define MAX_OUT_LIST_POOL  1024
 #define MAX_GROUP_STACK 256
 #define MAX_STATE_OUT   1024
+#define MAX_CCLASS   32
 
 #define MAX_REGEX 256
 
 #define CONCAT_SYM '&'
 
 
+/* Enum is ordered in order of precedence, do not change order!!!
+ * Higher number is higher precedence so we can easily compare.
+ * Precedence HIGH->LOW: (|&?*+
+ * */
+enum ReTokenType {
+    RE_TOK_TYPE_UNDEFINED = 0,
+
+    // QUANTIFIERS (in order of precedence) don't change this!!!!!
+    RE_TOK_TYPE_PLUS,       //  +   GREEDY     match preceding 1 or more times
+    RE_TOK_TYPE_STAR,       //  *   GREEDY     match preceding 0 or more times
+    RE_TOK_TYPE_QUESTION,   //  ?   NON GREEDY match preceding 1 time            when combined with another quantifier it makes it non greedy
+    RE_TOK_TYPE_CONCAT,          // explicit concat symbol
+    RE_TOK_TYPE_PIPE,       //  |   OR
+    //////////////////////////
+                         //
+    RE_TOK_TYPE_RANGE_START,  // {n}  NON GREEDY match preceding n times
+    RE_TOK_TYPE_RANGE_END,    // {n}  NON GREEDY match preceding n times
+    RE_TOK_TYPE_GROUP_START,  // (
+    RE_TOK_TYPE_GROUP_END,    // )
+    RE_TOK_TYPE_CCLASS_START, // [
+    RE_TOK_TYPE_CCLASS_END,   // ]
+                         
+    // OPERATORS
+    RE_TOK_TYPE_CARET,        // ^  can be NEGATE|BEGIN
+    RE_TOK_TYPE_NEGATE,       // ^
+    RE_TOK_TYPE_BEGIN,        // ^
+
+    RE_TOK_TYPE_END,          // $
+
+    RE_TOK_TYPE_BACKSLASH,    // \ backreference, not going to implement
+    RE_TOK_TYPE_DOT,          // .    any char except ' '
+                          
+    RE_TOK_TYPE_CHAR,             // literal char
+                         
+    RE_TOK_TYPE_DIGIT,            // \d   [0-9]
+    RE_TOK_TYPE_NON_DIGIT,        // \D   [^0-9]
+    RE_TOK_TYPE_ALPHA_NUM,        // \w   [a-bA-B0-9]
+    RE_TOK_TYPE_NON_ALPHA_NUM,    // \W   [^a-bA-B0-9]
+    RE_TOK_TYPE_SPACE,            // \s   ' ', \n, \t, \r
+    RE_TOK_TYPE_NON_SPACE,        // \S   ^' '
+                                  //
+    RE_TOK_TYPE_HYPHEN,           // -   (divides a range: [a-z]
+
+    RE_TOK_TYPE_RANGE,              // not a meta char, but represents a range
+};
+
+/* Regex expression is broken up into tokens.
+ * The two chars represent things like ranges.
+ * In case of character, the c1 is empty.
+ * In case of operator, both are empty. */
+struct ReToken {
+    enum ReTokenType type;
+    char c0;
+    char c1;
+};
 
 enum StateType {
+    STATE_TYPE_NONE,   // this is a state that is a char or an operator
     STATE_TYPE_MATCH,   // no output
-    STATE_TYPE_CHAR,    // one output to next state
     STATE_TYPE_SPLIT,   // two outputs to next states
 };
 
-enum
-{
-	STATE_MATCH = 256,
-	STATE_SPLIT = 257
-};
-
 struct State {
-    int c;
+    struct ReToken *t;
+
+    enum StateType type;          // indicate split or match state
+
+    // struct Token *token;
     struct State *out;
     struct State *out1;
-    int lastlist;
-
-    // check if state is allocated
-    char is_alloc;
+    unsigned char is_alloc;       // check if state is allocated
 };
 
+/* Holds links to endpoints of state chains that are part of a Group */
 struct OutList {
     struct State **s;
     struct OutList *next;
 };
 
+/* Holds State chains */
 struct Group {
     struct State *start;
     struct OutList *out;
-
-
-    //struct State **out[MAX_STATE_OUT];
     char is_alloc;
-
 };
 
 struct NFA {
     struct State spool[MAX_STATE_POOL];
 };
 
-struct State* nfa_state_init(struct NFA *nfa, int c, struct State *s_out, struct State *s_out1)
+struct State* nfa_state_init(struct NFA *nfa, struct ReToken *t, enum StateType type, struct State *s_out, struct State *s_out1)
 {
     /* Find unused state in pool */
     struct State *s = nfa->spool;
     for (int i=0 ; i<MAX_STATE_POOL ; i++, s++) {
         if (!s->is_alloc) {
             s->is_alloc = 1;
-            s->c = c;
+            s->t = t;
             s->out = s_out;
             s->out1 = s_out1;
+            s->type = type;
             return s;
         }
     }
@@ -92,15 +152,15 @@ void state_debug(struct State *s, int level)
     for (int i=0 ; i<level*spaces ; i++)
         printf(" ");
 
-    switch (s->c) {
-        case STATE_MATCH:
+    switch (s->type) {
+        case STATE_TYPE_MATCH:
             printf("  MATCH!\n");
             return;
-        case STATE_SPLIT:
+        case STATE_TYPE_SPLIT:
             printf("  SPLIT\n");
             break;
         default:
-            printf("  State: '%c'\n", s->c);
+            printf("  State: '%c'\n", s->t->c0);
             break;
 
     }
@@ -114,7 +174,7 @@ void stack_debug(struct Group *stack, size_t size)
     for (int i=0 ; i<size ; i++) {
         if (stack[i].start == NULL)
             break;
-        DEBUG("%d => %c\n", i, stack[i].start->c);
+        DEBUG("%d => %c\n", i, stack[i].start->t->c0);
     }
 }
 
@@ -173,7 +233,7 @@ struct OutList* outlist_join(struct OutList *l0, struct OutList *l1)
     return bak;
 }
 
-struct State* nfa_compile(struct NFA *nfa, const char *pattern)
+struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
 {
     /* Create NFA from pattern */
 
@@ -204,49 +264,49 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
     #define POP()   *--stackp
     #define GET_OL() outlistp++
 
-    DEBUG("Compiling pattern: '%s'\n", pattern);
+    //DEBUG("Compiling pattern: '%s'\n", pattern);
 
-    for (const char *p=pattern ; *p ; p++) {
-        switch (*p) {
-            case '&':       // concat
+    for (struct ReToken *t=tokens ; t->type != RE_TOK_TYPE_UNDEFINED ; t++) {
+        switch (t->type) {
+            case RE_TOK_TYPE_CONCAT:       // concat
                 g1 = POP();
                 g0 = POP();
                 group_patch_outlist(&g0, &g1.start);
                 g = group_init(nfa, g0.start, g1.out);
                 PUSH(g);
                 break;
-            case '?':       // zero or one
+            case RE_TOK_TYPE_QUESTION:       // zero or one
                 g = POP();
-                s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
+                s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 l = ol_init(GET_OL(), &s->out1);
                 l = outlist_join(g.out, l);
                 g = group_init(nfa, s, l);
                 PUSH(g);
                 break;
-            case '|':       // alternate
+            case RE_TOK_TYPE_PIPE:       // alternate
                 g1 = POP();
                 g0 = POP();
-                s = nfa_state_init(nfa, STATE_SPLIT, g0.start, g1.start);
+                s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g0.start, g1.start);
                 l = outlist_join(g0.out, g1.out);
                 PUSH(group_init(nfa, s, l));
 
                 break;
-            case '*':       // zero or more
+            case RE_TOK_TYPE_STAR:       // zero or more
                 g = POP();
-                s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
+                s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 group_patch_outlist(&g, &s);
                 l = ol_init(GET_OL(), &s->out1);
                 PUSH(group_init(nfa, g.start, l));
                 break;
-            case '+':       // one or more
+            case RE_TOK_TYPE_PLUS:       // one or more
                 g = POP();
-                s = nfa_state_init(nfa, STATE_SPLIT, g.start, NULL);
+                s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 group_patch_outlist(&g, &s);
                 l = ol_init(GET_OL(), &s->out1);
                 PUSH(group_init(nfa, s, l));
                 break;
             default:        // it is a normal character
-                s = nfa_state_init(nfa, *p, NULL, NULL);
+                s = nfa_state_init(nfa, t, STATE_TYPE_NONE, NULL, NULL);
                 l = ol_init(GET_OL(), &s->out);
                 g = group_init(nfa, s, l);
                 PUSH(g);
@@ -259,7 +319,7 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
     g = POP();
 
     // connect last state that indicates a succesfull match
-    struct State *match_state = nfa_state_init(nfa, STATE_MATCH, NULL, NULL);
+    struct State *match_state = nfa_state_init(nfa, NULL, STATE_TYPE_MATCH, NULL, NULL);
 
     group_patch_outlist(&g, &match_state);
 
@@ -272,251 +332,318 @@ struct State* nfa_compile(struct NFA *nfa, const char *pattern)
     return g.start;
 }
 
-/* Enum is ordered in order of precedence, do not change order!!!
- * Higher number is higher precedence so we can easily compare.
- * Precedence HIGH->LOW: (|&?*+
- * */
-enum REMetaChar {
-    RE_META_UNDEFINED = 256,
-
-    // QUANTIFIERS (in order of precedence) don't change this!!!!!
-    RE_META_PLUS,       //  +   GREEDY     match preceding 1 or more times
-    RE_META_STAR,       //  *   GREEDY     match preceding 0 or more times
-    RE_META_QUESTION,   //  ?   NON GREEDY match preceding 1 time            when combined with another quantifier it makes it non greedy
-    RE_CONCAT,          // explicit concat symbol
-    RE_META_PIPE,       //  |   OR
-    //////////////////////////
-                         //
-    RE_META_RANGE_START,  // {n}  NON GREEDY match preceding n times
-    RE_META_RANGE_END,    // {n}  NON GREEDY match preceding n times
-    RE_META_GROUP_START,  // (
-    RE_META_GROUP_END,    // )
-    RE_META_CCLASS_START, // [
-    RE_META_CCLASS_END,   // ]
-                         
-    // OPERATORS
-    RE_META_CARET,        // ^  can be NEGATE|BEGIN
-    RE_META_NEGATE,       // ^
-                          //
-    RE_META_BACKSLASH,    // \ backreference, not going to implement
-    RE_META_BEGIN,        // ^
-    RE_META_END,          // $
-    RE_META_DOT,          // .    any char except ' '
-                          
-    RE_CHAR,             // literal char
-
-                         
-    RE_MATCH_DIGIT,            // \d   [0-9]
-    RE_MATCH_NON_DIGIT,        // \D   [^0-9]
-    RE_MATCH_ALPHA_NUM,        // \w   [a-bA-B0-9]
-    RE_MATCH_NON_ALPHA_NUM,    // \W   [^a-bA-B0-9]
-    RE_MATCH_SPACE,            // \s   ' ', \n, \t, \r
-    RE_MATCH_NON_SPACE,        // \S   ^' '
-
-                             //
-};
-
-int re_get_meta_char(const char **s)
+struct ReToken re_get_meta_char(const char **s)
 {
     /* Reads first meta char from  string.
      * If one char meta or char, increment pointer +1
      * If two char meta, increment pointer +2 */
-    //assert(strlen(*s) > 0);
+    assert(strlen(*s) > 0);
+
+    struct ReToken tok;
 
     char c = **s;
 
     if (strlen(*s) > 1 && **s == '\\') {
         c = *((*s)+1);
         (*s)+=2;
+        tok.c0 = c;
         switch (c) {
             case 'd':
-                return RE_MATCH_DIGIT;
+                tok.type = RE_TOK_TYPE_DIGIT;
+                break;
             case 'D':
-                return RE_MATCH_NON_DIGIT;
+                tok.type = RE_TOK_TYPE_NON_DIGIT;
+                break;
             case 'w':
-                return RE_MATCH_ALPHA_NUM;
+                tok.type = RE_TOK_TYPE_ALPHA_NUM;
+                break;
             case 'W':
-                return RE_MATCH_ALPHA_NUM;
+                tok.type = RE_TOK_TYPE_ALPHA_NUM;
+                break;
             case 's':
-                return RE_MATCH_SPACE;
+                tok.type = RE_TOK_TYPE_SPACE;
+                break;
             case 'S':
-                return RE_MATCH_NON_SPACE;
+                tok.type = RE_TOK_TYPE_NON_SPACE;
+                break;
             default:
-                return RE_CHAR;
+                tok.type = RE_TOK_TYPE_CHAR;
+                break;
         }
     }
 
-    (*s)++;
-    switch (c) {
-        case '*':
-            return RE_META_STAR;
-        case '+':
-            return RE_META_PLUS;
-        case '?':
-            return RE_META_QUESTION;
-        case '{':
-            return RE_META_RANGE_START;
-        case '}':
-            return RE_META_RANGE_END;
-        case '(':
-            return RE_META_GROUP_START;
-        case ')':
-            return RE_META_GROUP_END;
-        case '[':
-            return RE_META_CCLASS_START;
-        case ']':
-            return RE_META_CCLASS_END;
-        case '|':
-            return RE_META_PIPE;
-        case '\\':
-            return RE_META_BACKSLASH;
-        // decide between BEGIN and NEGATE
-        case '^':
-            return RE_META_CARET;
-        case '$':
-            return RE_META_END;
-        case '.':
-            return RE_META_DOT;
-        case CONCAT_SYM:
-            return RE_CONCAT;
-        default:
-            return c;
+    else {
+        tok.c0 = c;
+        (*s)++;
+        switch (c) {
+            case '*':
+                tok.type = RE_TOK_TYPE_STAR;
+                break;
+            case '+':
+                tok.type = RE_TOK_TYPE_PLUS;
+                break;
+            case '?':
+                tok.type = RE_TOK_TYPE_QUESTION;
+                break;
+            case '{':
+                tok.type = RE_TOK_TYPE_RANGE_START;
+                break;
+            case '}':
+                tok.type = RE_TOK_TYPE_RANGE_END;
+                break;
+            case '(':
+                tok.type = RE_TOK_TYPE_GROUP_START;
+                break;
+            case ')':
+                tok.type = RE_TOK_TYPE_GROUP_END;
+                break;
+            case '[':
+                tok.type = RE_TOK_TYPE_CCLASS_START;
+                break;
+            case ']':
+                tok.type = RE_TOK_TYPE_CCLASS_END;
+                break;
+            case '|':
+                tok.type = RE_TOK_TYPE_PIPE;
+                break;
+            case '\\':
+                tok.type = RE_TOK_TYPE_BACKSLASH;
+                break;
+            // decide between BEGIN and NEGATE
+            case '^':
+                tok.type = RE_TOK_TYPE_CARET;
+                break;
+            case '$':
+                tok.type = RE_TOK_TYPE_END;
+                break;
+            case '-':
+                tok.type = RE_TOK_TYPE_HYPHEN;
+                break;
+            case '.':
+                tok.type = RE_TOK_TYPE_DOT;
+                break;
+            case CONCAT_SYM:
+                tok.type = RE_TOK_TYPE_CONCAT;
+                break;
+            default:
+                tok.type = RE_TOK_TYPE_CHAR;
+                break;
+        }
     }
+    return tok;
 }
 
-void debug_reg(int *arr, size_t len, int *pos)
+void debug_reg(struct ReToken *tokens)
 {
-    int *p = arr;
-    for (int i=0 ; i<len ; i++, p++) {
-        if (!*p)
-            break;
+    /* Print out token array */
+    struct ReToken *t = tokens;
+    while (t->type != RE_TOK_TYPE_UNDEFINED) {
 
-        if (p == pos)
-            break;
-
-        if (i != 0)
+        if (t != tokens)
             printf(" ");
 
-        switch (*p) {
-            case RE_CONCAT:
+        switch (t->type) {
+            case RE_TOK_TYPE_CONCAT:
                 printf("%c", CONCAT_SYM);
                 break;
-            case RE_META_GROUP_START:
+            case RE_TOK_TYPE_GROUP_START:
                 printf("(");
                 break;
-            case RE_META_STAR:
+            case RE_TOK_TYPE_GROUP_END:
+                printf(")");
+                break;
+            case RE_TOK_TYPE_RANGE:
+                printf("%c-%c", t->c0, t->c1);
+                break;
+            case RE_TOK_TYPE_STAR:
                 printf("*");
                 break;
-            case RE_META_PLUS:
+            case RE_TOK_TYPE_PLUS:
                 printf("+");
                 break;
-            case RE_META_QUESTION:
+            case RE_TOK_TYPE_QUESTION:
                 printf("?");
                 break;
-            case RE_META_PIPE:
+            case RE_TOK_TYPE_PIPE:
                 printf("|");
                 break;
-            case RE_MATCH_ALPHA_NUM:
+            case RE_TOK_TYPE_ALPHA_NUM:
                 printf("\\w");
                 break;
-            case RE_MATCH_DIGIT:
+            case RE_TOK_TYPE_DIGIT:
                 printf("\\d");
                 break;
-            case RE_MATCH_SPACE:
+            case RE_TOK_TYPE_SPACE:
                 printf("\\s");
                 break;
             default:
-                printf("%c", *p);
+                printf("%c", t->c0);
                 break;
         }
+        t++;
     }
     printf("\n");
 }
 
-char* re2post(char *re)
+struct ReToken* tokenize(const char *expr, struct ReToken *buf, size_t size)
 {
-	int nalt, natom;
-	static char buf[8000];
-	char *outputp;
-	struct {
-		int nalt;
-		int natom;
-	} paren[100], *p;
-	
-	p = paren;
-	outputp = buf;
-	nalt = 0;
-	natom = 0;
-	if(strlen(re) >= sizeof buf/2)
-		return NULL;
-	for(; *re; re++){
-		switch(*re){
-		case '(':
-			if(natom > 1){
-				--natom;
-				*outputp++ = '.';
-			}
-			if(p >= paren+100)
-				return NULL;
-			p->nalt = nalt;
-			p->natom = natom;
-			p++;
-			nalt = 0;
-			natom = 0;
-			break;
-		case '|':
-			if(natom == 0)
-				return NULL;
-			while(--natom > 0)
-				*outputp++ = '.';
-			nalt++;
-			break;
-		case ')':
-			if(p == paren)
-				return NULL;
-			if(natom == 0)
-				return NULL;
-			while(--natom > 0)
-				*outputp++ = '.';
-			for(; nalt > 0; nalt--)
-				*outputp++ = '|';
-			--p;
-			nalt = p->nalt;
-			natom = p->natom;
-			natom++;
-			break;
-		case '*':
-		case '+':
-		case '?':
-			if(natom == 0)
-				return NULL;
-			*outputp++ = *re;
-			break;
-		default:
-			if(natom > 1){
-				--natom;
-				*outputp++ = '.';
-			}
-			*outputp++ = *re;
-			natom++;
-			break;
-		}
-	}
-	if(p != paren)
-		return NULL;
-	while(--natom > 0)
-		*outputp++ = '.';
-	for(; nalt > 0; nalt--)
-		*outputp++ = '|';
-	*outputp = 0;
-	return buf;
+    struct ReToken *p_out = buf;
+    const char **p_in = &expr;
+    int i = 0;
+
+    while (strlen(*p_in)) {
+        struct ReToken t = re_get_meta_char(p_in);
+
+        assert(t.type != RE_TOK_TYPE_UNDEFINED);
+        if (i >= size) {
+            ERROR("Max tokensize reached: %ld\n", size);
+            return NULL;
+        }
+        *p_out++ = t;
+        i++;
+    }
+    return buf;
 }
 
-int infix_to_postfix(const char *expr)
+struct ReToken* re_rewrite_range(struct ReToken *tokens, size_t size)
 {
-    // intermediate operator stack
-    // output queue
-    // input array
+    /* Extract range from tokens and rewrite to group.
+     * This makes it way easier to do the reverse Polish notation algorithm later.
+     *
+     * eg: [a-zA-Zbx] -> (range_token | range_token | b | x)
+     *
+     * Algorithm:
+     * for TOKEN in TOKENS
+     *     TOKEN_TOP_STACK = pop from stack
+     *     if TOKEN_TOP_STACK is hyphen
+     *         TOKEN_RANGE_START = pop from stack
+     *         create TOKEN_RANGE (TOKEN_RANGE_START - TOKEN)
+     *         push TOKEN_RANGE to output array
+     *     else
+     *         push TOKEN to stack
+     */
+    struct ReToken *t = tokens;
+    struct ReToken out_buf[size];
+    struct ReToken *t_out = out_buf;
+
+    memset(&out_buf, 0, sizeof(struct ReToken) * size);
+
+    // Temporary buffer for tokens inside cclass
+    struct Cclass {
+        unsigned char in_cclass;
+        struct ReToken *tokens[MAX_CCLASS];
+        int size;
+    } cclass;
+
+    struct ReToken *stack[size];
+
+    #define STACK_IS_EMPTY() (stackp == stack)
+    #define PUSH(S) *stackp++ = S
+    #define POP()   *--stackp
+    #define RESET_CCLASS() memset(&cclass, 0, sizeof(struct Cclass))
+    RESET_CCLASS();
+
+    for (; t->type != RE_TOK_TYPE_UNDEFINED ; t++) {
+        if (t->type == RE_TOK_TYPE_CCLASS_START) {
+            cclass.in_cclass = 1;
+        }
+        // Cclass end found. Now convert tokens in temporary buffer to a group so it is easier to do RPN later
+        else if (t->type == RE_TOK_TYPE_CCLASS_END) {
+            *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_GROUP_START};
+            struct ReToken **stackp = stack;
+            struct ReToken **cclassp = cclass.tokens;
+
+            for (int i=0 ; i<cclass.size ; i++, cclassp++) {
+
+                struct ReToken *t0 = POP();
+                if (STACK_IS_EMPTY() &&  t0->type == RE_TOK_TYPE_HYPHEN) {
+                    ERROR("Malformed range\n");
+                    return NULL;
+                }
+
+                if (t0->type == RE_TOK_TYPE_HYPHEN) {
+                    struct ReToken *t1 = POP();
+                    *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_RANGE, .c0=t1->c0, .c1=(*cclassp)->c0};
+
+                    if (i > 0)
+                        *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_PIPE};
+                }
+                else {
+                    PUSH(t0);
+                    PUSH(*cclassp);
+                }
+            }
+
+            // empty stack into output buffer
+            while (!STACK_IS_EMPTY()) {
+                *t_out++ = *POP();
+                *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_PIPE};
+            }
+
+            // remove extra pipe
+            t_out--;
+            *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_GROUP_END};
+            RESET_CCLASS();
+        }
+        // Add token to temporary cclass buffer
+        else if (cclass.in_cclass) {
+            cclass.tokens[cclass.size++] = t;
+        }
+        else {
+            *t_out++ = *t;
+        }
+    }
+    memcpy(tokens, out_buf, size*sizeof(struct ReToken));
+    return tokens;
+
+#undef STACK_IS_EMPTY
+#undef PUSH
+#undef POP
+#undef RESET_CCLASS
+}
+
+
+struct ReToken* re_to_explicit_cat(struct ReToken *tokens, size_t size)
+{
+    /* Parse expression into tokens and put in explicit cat tokens */
+    struct ReToken out_buf[size];
+    struct ReToken *t_out = out_buf;
+    struct ReToken *t0 = tokens;
+
+    memset(&out_buf, 0, sizeof(struct ReToken) * size);
+
+    for (; t0->type != RE_TOK_TYPE_UNDEFINED ; t0++) {
+
+        *t_out++ = *t0;
+
+        struct ReToken *t1 = t0+1;
+
+        if (t1->type != RE_TOK_TYPE_UNDEFINED) {
+            //DEBUG("'%c' - '%c', type: '%d'\n", t0.c0, t1.c0, t1.type);
+
+            if (t0->type != RE_TOK_TYPE_GROUP_START &&
+                t1->type != RE_TOK_TYPE_GROUP_END &&
+                t1->type != RE_TOK_TYPE_PIPE &&
+                t1->type != RE_TOK_TYPE_QUESTION &&
+                t1->type != RE_TOK_TYPE_PLUS &&
+                t1->type != RE_TOK_TYPE_STAR &&
+                t1->type != RE_TOK_TYPE_CARET &&
+                t0->type != RE_TOK_TYPE_CARET &&
+                t0->type != RE_TOK_TYPE_PIPE)
+                *t_out++ = (struct ReToken){.type=RE_TOK_TYPE_CONCAT};
+
+        }
+    }
+    memcpy(tokens, out_buf, size*sizeof(struct ReToken));
+    return tokens;
+}
+
+int infix_to_postfix(struct ReToken *tokens, struct ReToken *buf, size_t size)
+{
+    // USING:
+    //   intermediate operator stack
+    //   output queue
+    //   input array
     //
     // OP precedence: (|&?*+^
     //
@@ -536,61 +663,15 @@ int infix_to_postfix(const char *expr)
     //   while stack not empty
     //     pop OP from stack to queue
     //
-    // read: https://gist.github.com/gmenard/6161825
-    // read: https://gist.github.com/DmitrySoshnikov/1239804/ba3f22f72d7ea00c3a662b900ded98d344d46752
-    // yt:   https://www.youtube.com/watch?v=QzVVjboyb0s
 
-    DEBUG("Parsing: %s\n", expr);
+    struct ReToken opstack[MAX_REGEX];    // intermediate storage stack for operators
+    memset(opstack, 0, sizeof(struct ReToken) * MAX_REGEX);
+    memset(buf, 0, sizeof(struct ReToken) * size);
 
-
-    // start by adding explicit CAT symbols
-    int regex_expl[MAX_REGEX]; // regex chars with added concat symbols
-    memset(regex_expl, 0, sizeof(int) * MAX_REGEX);
-
-    int *p_out = regex_expl;
-    const char **p_in = &expr;
-
-    while (strlen(*p_in)) {
-        DEBUG("len: %ld\n", strlen(*p_in));
-
-        int c0 = re_get_meta_char(p_in);
-        int c1 = re_get_meta_char(p_in);
-
-        *p_out++ = c0;
-        if (!c1)
-            break;
-
-        DEBUG("chars: '%c' '%c'\n", c0, c1);
-
-        if (c0 != RE_META_GROUP_START &&
-            c1 != RE_META_GROUP_END &&
-            c1 != RE_META_PIPE &&
-            c1 != RE_META_QUESTION &&
-            c1 != RE_META_PLUS &&
-            c1 != RE_META_STAR &&
-            c1 != RE_META_CARET &&
-            c0 != RE_META_CARET &&
-            c0 != RE_META_PIPE)
-            *p_out++ = RE_CONCAT;
-
-        (*p_in)--;
-    }
-
-    DEBUG("Regex in explicit CAT notation: ");
-    debug_reg(regex_expl, MAX_REGEX, p_out);
-
-
-    // Turn it into reverse Polish notation (RPN)
-    int outq[MAX_REGEX];       // ouput queue
-    int opstack[MAX_REGEX];    // intermediate storage stack for operators
-
-    memset(outq, 0, sizeof(int) * MAX_REGEX);
-    memset(opstack, 0, sizeof(int) * MAX_REGEX);
-
-    int *outqp = outq;
-    int *stackp = opstack;
-
-    int op;
+    struct ReToken *outqp = buf;
+    struct ReToken *stackp = opstack;
+    struct ReToken op;
+    struct ReToken *t = tokens;
 
     // track how many pipes we've seen and if they're in () or not
     int op_pipe = 0;
@@ -600,66 +681,55 @@ int infix_to_postfix(const char *expr)
     #define POP()   *--stackp
     #define PUSH_OUT(S) *outqp++ = S
 
-    int *c = regex_expl;
-
-    while (*c) {
-
-        DEBUG("CHAR: '%c'\n", *c);
-        // TODO put concat symbols in
-
-        switch (*c) {
-            case RE_META_GROUP_START:
-                DEBUG("GROUP START\n");
-                PUSH(*c);
+    while (t->type != RE_TOK_TYPE_UNDEFINED) {
+        switch (t->type) {
+            case RE_TOK_TYPE_GROUP_START:
+                //DEBUG("GROUP START\n");
+                PUSH(*t);
                 in_group = 1;
                 break;
-            case RE_META_GROUP_END:
-                DEBUG("GROUP END\n");
-                while ((op = POP()) != RE_META_GROUP_START)
+            case RE_TOK_TYPE_GROUP_END:
+                //DEBUG("GROUP END\n");
+                while ((op = POP()).type != RE_TOK_TYPE_GROUP_START)
                     PUSH_OUT(op);
                 for (int i=0 ; i<op_pipe ; i++) {
-                    DEBUG("PUT PIPE\n");
-                    PUSH_OUT(RE_META_PIPE);
+                    struct ReToken t_pipe = {RE_TOK_TYPE_PIPE};
+                    PUSH_OUT(t_pipe);
+                    //DEBUG("PUT PIPE\n");
                 }
                 op_pipe = 0;
                 in_group = 0;
                 break;
-            case RE_META_PIPE:
+            case RE_TOK_TYPE_PIPE:
                 op_pipe++;
                 break;
-            case RE_CONCAT:
-                DEBUG("CONCAT\n");
-                PUSH(*c);
+            case RE_TOK_TYPE_CONCAT:
+                //DEBUG("CONCAT\n");
+                PUSH(*t);
                 break;
-            case RE_META_STAR:
-            case RE_META_PLUS:
-            case RE_META_QUESTION:
+            case RE_TOK_TYPE_STAR:
+            case RE_TOK_TYPE_PLUS:
+            case RE_TOK_TYPE_QUESTION:
                 // PIPE is already postfix so we should put it behind next char
                 while (stackp != opstack) {
                     op = POP();
-                    DEBUG("POP: %c, %d\n", op, op);
+                    //DEBUG("POP: %c, %d\n", op.c0, op.c0);
 
                     // check precedence (operators are ordered in enum)
-                    if (op >= *c) {
+                    if (op.c0 >= t->c0) {
                         PUSH(op);
                         break;
                     }
 
                     PUSH_OUT(op);
                 }
-                PUSH_OUT(*c);
+                PUSH_OUT(*t);
                 break;
             default:
-                PUSH_OUT(*c);
+                PUSH_OUT(*t);
                 break;
-
         }
-        DEBUG("QUEUE: ");
-        debug_reg(outq, MAX_REGEX, outqp);
-        DEBUG("STACK: ");
-        debug_reg(opstack, MAX_REGEX, stackp);
-        printf("\n");
-        c++;
+        t++;
     }
 
     // empty stack into out queue
@@ -667,14 +737,10 @@ int infix_to_postfix(const char *expr)
         PUSH_OUT(POP());
 
     // put pipes
-    for (int i=0 ; i<op_pipe ; i++)
-        PUSH_OUT(RE_META_PIPE);
-
-    DEBUG("QUEUE: ");
-    debug_reg(outq, MAX_REGEX, outqp);
-    DEBUG("STACK: ");
-    debug_reg(opstack, MAX_REGEX, stackp);
-    printf("\n");
+    for (int i=0 ; i<op_pipe ; i++) {
+        struct ReToken t_pipe = {RE_TOK_TYPE_PIPE};
+        PUSH_OUT(t_pipe);
+    }
 
     return 0;
 
@@ -683,22 +749,38 @@ int infix_to_postfix(const char *expr)
     #undef PUSH_OUT
 }
 
-int main()
+int main(int argc, char **argv)
 {
-    //infix_to_postfix("a&b&c");
-    //infix_to_postfix("ab(b|c|d)?a+b");
-    //infix_to_postfix("(b|c|d)a+|bbc");
-    DEBUG("out: %s\n", re2post("abcdef"));
-    infix_to_postfix("abcdef");
+    if (argc < 2) {
+        ERROR("Missing expression\n");
+        return 1;
+    }
+
+    const char *expr = argv[1];
+
+    DEBUG("Parsing: %s\n", expr);
+    struct ReToken tokens_infix[MAX_REGEX]; // regex chars with added concat symbols
+    struct ReToken tokens_postfix[MAX_REGEX]; // regex chars with added concat symbols
+    
+    if (tokenize(expr, tokens_infix, MAX_REGEX) == NULL)
+        return 1;
+
+    DEBUG("TOKENS:  "); debug_reg(tokens_infix);
+
+    if (re_rewrite_range(tokens_infix, MAX_REGEX) == NULL)
+        return 1;
 
 
-    return 1;
+    DEBUG("RANGE:   "); debug_reg(tokens_infix);
+    
+    re_to_explicit_cat(tokens_infix, MAX_REGEX);
+    DEBUG("CAT:     "); debug_reg(tokens_infix);
+
+    infix_to_postfix(tokens_infix, tokens_postfix, MAX_REGEX);
+
+    DEBUG("POSTFIX: "); debug_reg(tokens_postfix);
 
     struct NFA nfa = nfa_init();
-    nfa_compile(&nfa, "ab&b&b&b&bb&e&e&|");
+    nfa_compile(&nfa, tokens_postfix);
     return 1;
-
-
-
-
 }
