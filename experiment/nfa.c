@@ -121,6 +121,9 @@ struct Group {
 
 struct NFA {
     struct State spool[MAX_STATE_POOL];
+
+    // The first node in the NFA
+    struct State *start;
 };
 
 struct State* nfa_state_init(struct NFA *nfa, struct ReToken *t, enum StateType type, struct State *s_out, struct State *s_out1)
@@ -160,7 +163,10 @@ void state_debug(struct State *s, int level)
             printf("  SPLIT\n");
             break;
         default:
-            printf("  State: '%c'\n", s->t->c0);
+            if (s->t->type == RE_TOK_TYPE_RANGE && s->t->c1)
+                printf("  State: [%c-%c]\n", s->t->c0, s->t->c1);
+            else
+                printf("  State: '%c'\n", s->t->c0);
             break;
 
     }
@@ -324,12 +330,13 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
     group_patch_outlist(&g, &match_state);
 
     state_debug(g.start, 0);
+    nfa->start = g.start;
+
+    return g.start;
 
     #undef POP
     #undef PUSH
     #undef GET_OL
-
-    return g.start;
 }
 
 struct ReToken re_get_meta_char(const char **s)
@@ -475,6 +482,9 @@ void debug_reg(struct ReToken *tokens)
                 break;
             case RE_TOK_TYPE_SPACE:
                 printf("\\s");
+                break;
+            case RE_TOK_TYPE_DOT:
+                printf(".");
                 break;
             default:
                 printf("%c", t->c0);
@@ -744,6 +754,140 @@ int infix_to_postfix(struct ReToken *tokens, struct ReToken *buf, size_t size)
     #undef PUSH_OUT
 }
 
+int re_is_match(struct State *s)
+{
+    return s->type == STATE_TYPE_MATCH;
+}
+
+int re_is_endpoint(struct State *s)
+{
+    return s->out == NULL && s->out1 == NULL;
+}
+
+struct MatchList {
+    struct State *states[256];
+    int n;
+};
+
+struct MatchList re_match_list_init()
+{
+    struct MatchList l;
+    memset(&l, 0, sizeof(struct MatchList));
+    l.n = 0;
+    return l;
+
+}
+
+void re_match_list_append(struct MatchList *l, struct State *s)
+{
+    if (s == NULL)
+        return;
+
+
+    if (s->type == STATE_TYPE_SPLIT) {
+        re_match_list_append(l, s->out);
+        re_match_list_append(l, s->out1);
+    }
+    else {
+        if (s->t) {
+            DEBUG("ADDING STATE: %d, %c\n", s->t->type, s->t->c0);
+        }
+        else {
+            DEBUG("ADDING STATE\n");
+        }
+        l->states[l->n] = s;
+        l->n++;
+    }
+}
+
+void debug_match_list(struct MatchList *l)
+{
+    DEBUG("** MATCH LIST **\n");
+    struct State *s = l->states[0];
+    for (int i=0 ; i<l->n ; i++, s++) {
+        if (s->type == STATE_TYPE_MATCH) {
+            DEBUG("%d: MATCH\n", i);
+        }
+        else {
+            DEBUG("%d: %c\n", i, s->t->c0);
+        }
+    }
+    DEBUG("****************\n");
+}
+
+struct State* re_match_list_has_match(struct MatchList *l, char c)
+{
+
+    /* Return if there is a matching state in the list */
+    struct State *s = l->states[0];
+    for (int i=0 ; i<l->n ; i++, s++) {
+        DEBUG("LOOKING FOR MATCH: '%c' ? '%c'\n", s->t->c0, c);
+        if (s->t && s->t->c0 == c) {
+            DEBUG("Has match: '%c'\n", s->t->c0);
+            return s;
+        }
+    }
+    DEBUG("LOOK FOR MATCH, NO MATCH\n");
+    return NULL;
+}
+
+struct State* re_match_list_has_end(struct MatchList *l)
+{
+    struct State *s = l->states[0];
+    for (int i=0 ; i<l->n ; i++, s++) {
+        if (s->type == STATE_TYPE_MATCH)
+            return s;
+    }
+    return NULL;
+}
+
+int re_match(struct NFA *nfa, const char *str)
+{
+    const char *c = str;
+
+
+    // this is where we record the states
+    struct MatchList l0 = re_match_list_init();
+    struct MatchList l1 = re_match_list_init();
+
+    // we have to clear current list and swap the lists after every step
+    struct MatchList *clist = &l0;
+    struct MatchList *nlist = &l1;
+
+    // add first node
+    clist->states[0] = nfa->start;
+    clist->n++;
+    //re_match_list_append(clist, nfa->start);
+    debug_match_list(clist);
+
+    for (; *c ; c++) {
+        DEBUG("CUR CHAR: '%c'\n", *c);
+
+        struct State *match = re_match_list_has_match(clist, *c);
+        if (match) {
+            DEBUG("CHAR MATCHES: '%c'\n", *c);
+            *clist = re_match_list_init();
+
+            re_match_list_append(clist, match->out);
+
+            debug_match_list(clist);
+
+            if (re_match_list_has_end(clist)) {
+                DEBUG("WE GOT A MATCH!!!\n");
+                return 1;
+            }
+            //clist = nlist;
+        }
+        else {
+            DEBUG("NO MATCH\n");
+            return -1;
+        }
+    }
+
+    return 0;
+
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -751,7 +895,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (argc < 3) {
+        ERROR("Missing input string\n");
+        return 1;
+    }
+
     const char *expr = argv[1];
+    const char *input = argv[2];
 
     DEBUG("Parsing: %s\n", expr);
     struct ReToken tokens_infix[MAX_REGEX]; // regex chars with added concat symbols
@@ -779,5 +929,6 @@ int main(int argc, char **argv)
 
     struct NFA nfa = nfa_init();
     nfa_compile(&nfa, tokens_postfix);
+    re_match(&nfa, input);
     return 1;
 }
