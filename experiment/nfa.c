@@ -160,7 +160,16 @@ void state_debug(struct State *s, int level)
             printf("  MATCH!\n");
             return;
         case STATE_TYPE_SPLIT:
-            printf("  SPLIT\n");
+            printf("  SPLIT: [%d] '%c'\n", s->t->type, s->t->c0);
+
+            // don't follow start and plus because that would create endless loop
+            if (s->t->type == RE_TOK_TYPE_PLUS || s->t->type == RE_TOK_TYPE_STAR) {
+                for (int i=0 ; i<level*spaces ; i++)
+                    printf(" ");
+                printf("    NOT FOLLOWING: %c\n", s->out->t->c0);
+                state_debug(s->out1, level+1);
+                return;
+            }
             break;
         default:
             if (s->t->type == RE_TOK_TYPE_RANGE && s->t->c1)
@@ -221,6 +230,8 @@ struct Group group_init(struct NFA *nfa, struct State *s_start, struct OutList *
 
 void group_patch_outlist(struct Group *g, struct State **s)
 {
+    /* Tie all State end pointers in outlist to s.
+     * Effectively connecting endpoints in group to other group */
     struct OutList *lp = g->out;
     while (lp != NULL) {
         *(lp->s) = *s;
@@ -258,12 +269,12 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
     // A normal char pushes a group onto the stack
     // A meta char pops one or two groups from the stack
     struct Group stack[MAX_GROUP_STACK];
-    struct OutList pool[MAX_OUT_LIST_POOL];
+    struct OutList lpool[MAX_OUT_LIST_POOL];
     struct Group *stackp = stack;
     struct Group g, g0, g1; // the paths groups take from stack
 
     struct State *s;
-    struct OutList *outlistp = pool;
+    struct OutList *outlistp = lpool;
     struct OutList *l;
 
     #define PUSH(S) *stackp++ = S
@@ -273,16 +284,24 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
     //DEBUG("Compiling pattern: '%s'\n", pattern);
 
     for (struct ReToken *t=tokens ; t->type != RE_TOK_TYPE_UNDEFINED ; t++) {
+
+        //for (int i=0 ; i<stackp-stack ; i++) {
+        //    DEBUG("GROUP: %d ******************************\n", i);
+        //    state_debug(stack[i].start, 0);
+        //}
+
         switch (t->type) {
             case RE_TOK_TYPE_CONCAT:       // concat
                 g1 = POP();
                 g0 = POP();
+                DEBUG("TYPE: CONCAT\n");
                 group_patch_outlist(&g0, &g1.start);
                 g = group_init(nfa, g0.start, g1.out);
                 PUSH(g);
                 break;
             case RE_TOK_TYPE_QUESTION:       // zero or one
                 g = POP();
+                DEBUG("TYPE: QUESTION: %c\n", g.start->t->c0);
                 s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 l = ol_init(GET_OL(), &s->out1);
                 l = outlist_join(g.out, l);
@@ -292,6 +311,7 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
             case RE_TOK_TYPE_PIPE:       // alternate
                 g1 = POP();
                 g0 = POP();
+                DEBUG("TYPE: PIPE:   %c | %c\n", g0.start->t->c0, g1.start->t->c0);
                 s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g0.start, g1.start);
                 l = outlist_join(g0.out, g1.out);
                 PUSH(group_init(nfa, s, l));
@@ -299,6 +319,7 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
                 break;
             case RE_TOK_TYPE_STAR:       // zero or more
                 g = POP();
+                DEBUG("TYPE: STAR:   %c\n", g.start->t->c0);
                 s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 group_patch_outlist(&g, &s);
                 l = ol_init(GET_OL(), &s->out1);
@@ -306,12 +327,14 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
                 break;
             case RE_TOK_TYPE_PLUS:       // one or more
                 g = POP();
+                DEBUG("TYPE: PLUS:   %c\n", g.start->t->c0);
                 s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, g.start, NULL);
                 group_patch_outlist(&g, &s);
                 l = ol_init(GET_OL(), &s->out1);
                 PUSH(group_init(nfa, s, l));
                 break;
             default:        // it is a normal character
+                DEBUG("TYPE: CHAR:   %c\n", t->c0);
                 s = nfa_state_init(nfa, t, STATE_TYPE_NONE, NULL, NULL);
                 l = ol_init(GET_OL(), &s->out);
                 g = group_init(nfa, s, l);
@@ -329,7 +352,7 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
 
     group_patch_outlist(&g, &match_state);
 
-    state_debug(g.start, 0);
+    //state_debug(g.start, 0);
     nfa->start = g.start;
 
     return g.start;
@@ -337,6 +360,127 @@ struct State* nfa_compile(struct NFA *nfa, struct ReToken *tokens)
     #undef POP
     #undef PUSH
     #undef GET_OL
+}
+
+struct State* nfa_compile_rec(struct NFA *nfa, struct ReToken *tokens, struct State *s_prev)
+{
+    struct ReToken *t = &tokens[0];
+    if (t->type == RE_TOK_TYPE_UNDEFINED) {
+        DEBUG("END OF TOKENS\n");
+        return NULL;
+    }
+
+    struct State *s_cur;
+    struct State *s_next;
+    //struct State *s = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, NULL, NULL);
+
+    switch (t->type) {
+        case RE_TOK_TYPE_CONCAT:       // concat
+            DEBUG("TYPE: CONCAT\n");
+            s_cur = nfa_state_init(nfa, t, STATE_TYPE_SPLIT, NULL, NULL);
+            s_next = nfa_compile_rec(nfa, tokens+1, s_cur);
+            s_cur->out = s_next;
+            //s_cur->out1 = s_prev;
+            return s_cur;
+        case RE_TOK_TYPE_QUESTION:       // zero or one
+            DEBUG("TYPE: QUESTION\n");
+            break;
+        case RE_TOK_TYPE_PIPE:       // alternate
+            DEBUG("TYPE: PIPE\n");
+            break;
+        case RE_TOK_TYPE_STAR:       // zero or more
+            DEBUG("TYPE: STAR\n");
+            break;
+        case RE_TOK_TYPE_PLUS:       // one or more
+            DEBUG("TYPE: PLUS\n");
+            break;
+        default:        // it is a normal character
+            DEBUG("TYPE: CHAR\n");
+            s_cur = nfa_state_init(nfa, t, STATE_TYPE_NONE, NULL, NULL);
+            s_next = nfa_compile_rec(nfa, tokens+1, s_cur);
+            s_cur->out = s_next;
+            return s_cur;
+    }
+}
+
+
+char* re2post(const char *re)
+{
+	int nalt, natom;
+	static char buf[8000];
+	char *outputp;
+	struct {
+		int nalt;
+		int natom;
+	} paren[100], *p;
+	
+	p = paren;
+	outputp = buf;
+	nalt = 0;
+	natom = 0;
+	if(strlen(re) >= sizeof buf/2)
+		return NULL;
+	for(; *re; re++){
+		switch(*re){
+		case '(':
+			if(natom > 1){
+				--natom;
+				*outputp++ = CONCAT_SYM;
+			}
+			if(p >= paren+100)
+				return NULL;
+			p->nalt = nalt;
+			p->natom = natom;
+			p++;
+			nalt = 0;
+			natom = 0;
+			break;
+		case '|':
+			if(natom == 0)
+				return NULL;
+			while(--natom > 0)
+				*outputp++ = CONCAT_SYM;
+			nalt++;
+			break;
+		case ')':
+			if(p == paren)
+				return NULL;
+			if(natom == 0)
+				return NULL;
+			while(--natom > 0)
+				*outputp++ = CONCAT_SYM;
+			for(; nalt > 0; nalt--)
+				*outputp++ = '|';
+			--p;
+			nalt = p->nalt;
+			natom = p->natom;
+			natom++;
+			break;
+		case '*':
+		case '+':
+		case '?':
+			if(natom == 0)
+				return NULL;
+			*outputp++ = *re;
+			break;
+		default:
+			if(natom > 1){
+				--natom;
+				*outputp++ = CONCAT_SYM;
+			}
+			*outputp++ = *re;
+			natom++;
+			break;
+		}
+	}
+	if(p != paren)
+		return NULL;
+	while(--natom > 0)
+		*outputp++ = CONCAT_SYM;
+	for(; nalt > 0; nalt--)
+		*outputp++ = '|';
+	*outputp = 0;
+	return buf;
 }
 
 struct ReToken re_get_meta_char(const char **s)
@@ -783,18 +927,15 @@ void re_match_list_append(struct MatchList *l, struct State *s)
     if (s == NULL)
         return;
 
-
     if (s->type == STATE_TYPE_SPLIT) {
+        DEBUG("SPLIT%d: ", l->n);
         re_match_list_append(l, s->out);
+        DEBUG("SPLIT%d: ", l->n);
         re_match_list_append(l, s->out1);
     }
     else {
-        if (s->t) {
-            DEBUG("ADDING STATE: %d, %c\n", s->t->type, s->t->c0);
-        }
-        else {
-            DEBUG("ADDING STATE\n");
-        }
+        //assert("Token should not be NULL!" && s->t != NULL);
+        //DEBUG("ADDING STATE: %d, %c\n", s->t->type, s->t->c0);
         l->states[l->n] = s;
         l->n++;
     }
@@ -802,17 +943,17 @@ void re_match_list_append(struct MatchList *l, struct State *s)
 
 void debug_match_list(struct MatchList *l)
 {
-    DEBUG("** MATCH LIST **\n");
-    struct State *s = l->states[0];
+    struct State *s = *(l->states);
     for (int i=0 ; i<l->n ; i++, s++) {
-        if (s->type == STATE_TYPE_MATCH) {
-            DEBUG("%d: MATCH\n", i);
+        if (l->states[i]->type == STATE_TYPE_MATCH) {
+            DEBUG("MATCHLIST: [%d] MATCH\n", i);
         }
         else {
-            DEBUG("%d: %c\n", i, s->t->c0);
+            DEBUG("MATCHLIST: [%d] %c\n", i, l->states[i]->t->c0);
+            //DEBUG("MATCHLIST: [%d] %c\n", i, s->t->c0);
         }
     }
-    DEBUG("****************\n");
+    DEBUG("\n");
 }
 
 struct State* re_match_list_has_match(struct MatchList *l, char c)
@@ -821,13 +962,13 @@ struct State* re_match_list_has_match(struct MatchList *l, char c)
     /* Return if there is a matching state in the list */
     struct State *s = l->states[0];
     for (int i=0 ; i<l->n ; i++, s++) {
-        DEBUG("LOOKING FOR MATCH: '%c' ? '%c'\n", s->t->c0, c);
-        if (s->t && s->t->c0 == c) {
-            DEBUG("Has match: '%c'\n", s->t->c0);
-            return s;
+        //if (s->t && s->t->c0 == c) {
+        if (l->states[i]->t && l->states[i]->t->c0 == c) {
+            DEBUG("FOUND MATCH: '%c'\n", l->states[i]->t->c0);
+            return l->states[i];
         }
     }
-    DEBUG("LOOK FOR MATCH, NO MATCH\n");
+    DEBUG("NO MATCH: '%c'\n", c);
     return NULL;
 }
 
@@ -835,7 +976,7 @@ struct State* re_match_list_has_end(struct MatchList *l)
 {
     struct State *s = l->states[0];
     for (int i=0 ; i<l->n ; i++, s++) {
-        if (s->type == STATE_TYPE_MATCH)
+        if (l->states[i]->type == STATE_TYPE_MATCH)
             return s;
     }
     return NULL;
@@ -845,41 +986,37 @@ int re_match(struct NFA *nfa, const char *str)
 {
     const char *c = str;
 
-
     // this is where we record the states
-    struct MatchList l0 = re_match_list_init();
-    struct MatchList l1 = re_match_list_init();
-
-    // we have to clear current list and swap the lists after every step
-    struct MatchList *clist = &l0;
-    struct MatchList *nlist = &l1;
+    struct MatchList clist = re_match_list_init();
+    struct MatchList path = re_match_list_init();
 
     // add first node
-    clist->states[0] = nfa->start;
-    clist->n++;
+    clist.states[0] = nfa->start;
+    clist.n++;
     //re_match_list_append(clist, nfa->start);
-    debug_match_list(clist);
+    debug_match_list(&clist);
 
     for (; *c ; c++) {
         DEBUG("CUR CHAR: '%c'\n", *c);
 
-        struct State *match = re_match_list_has_match(clist, *c);
+        struct State *match = re_match_list_has_match(&clist, *c);
         if (match) {
-            DEBUG("CHAR MATCHES: '%c'\n", *c);
-            *clist = re_match_list_init();
 
-            re_match_list_append(clist, match->out);
+            DEBUG("Found match: %c\n", match->t->c0);
+            DEBUG("adding match: ");
+            re_match_list_append(&path, match);
 
-            debug_match_list(clist);
+            clist = re_match_list_init();
+            re_match_list_append(&clist, match->out);
+            debug_match_list(&clist);
 
-            if (re_match_list_has_end(clist)) {
+            if (re_match_list_has_end(&clist)) {
                 DEBUG("WE GOT A MATCH!!!\n");
+                debug_match_list(&path);
                 return 1;
             }
-            //clist = nlist;
         }
         else {
-            DEBUG("NO MATCH\n");
             return -1;
         }
     }
@@ -907,28 +1044,33 @@ int main(int argc, char **argv)
     struct ReToken tokens_infix[MAX_REGEX]; // regex chars with added concat symbols
     struct ReToken tokens_postfix[MAX_REGEX]; // regex chars with added concat symbols
     
-    if (tokenize(expr, tokens_infix, MAX_REGEX) == NULL)
+    char *expr_postfix = re2post(expr);
+    //if (tokenize(expr_postfix, tokens_infix, MAX_REGEX) == NULL)
+    if (tokenize(expr_postfix, tokens_postfix, MAX_REGEX) == NULL)
         return 1;
 
-    DEBUG("TOKENS:  "); debug_reg(tokens_infix);
+    DEBUG("TOKENS:  "); debug_reg(tokens_postfix);
 
-    if (re_rewrite_range(tokens_infix, MAX_REGEX) == NULL)
-        return 1;
+    //if (re_rewrite_range(tokens_infix, MAX_REGEX) == NULL)
+    //    return 1;
 
 
-    DEBUG("RANGE:   "); debug_reg(tokens_infix);
-    
-    if (re_to_explicit_cat(tokens_infix, MAX_REGEX) == NULL)
-        return 1;
+    //DEBUG("RANGE:   "); debug_reg(tokens_infix);
+    //
+    //if (re_to_explicit_cat(tokens_infix, MAX_REGEX) == NULL)
+    //    return 1;
 
-    DEBUG("CAT:     "); debug_reg(tokens_infix);
+    //DEBUG("CAT:     "); debug_reg(tokens_infix);
 
-    infix_to_postfix(tokens_infix, tokens_postfix, MAX_REGEX);
+    //infix_to_postfix(tokens_infix, tokens_postfix, MAX_REGEX);
 
-    DEBUG("POSTFIX: "); debug_reg(tokens_postfix);
+    //DEBUG("POSTFIX: "); debug_reg(tokens_postfix);
 
     struct NFA nfa = nfa_init();
+    //struct State *s = nfa_compile_rec(&nfa, tokens_postfix, NULL);
     nfa_compile(&nfa, tokens_postfix);
+    state_debug(nfa.start, 0);
+    //state_debug(s, 0);
     re_match(&nfa, input);
     return 1;
 }
